@@ -1,0 +1,12 @@
+{
+  "ignore": [
+    "data/*",
+    "*.log",
+    "client/*",
+    "node_modules/*"
+  ],
+  "ext": "js,json",
+  "env": {
+    "NODE_ENV": "development"
+  }
+}
