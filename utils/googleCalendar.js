@@ -99,40 +99,49 @@ async function detectLocation(date) {
   }
 }
 
-async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTimezone = null) {
+async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTimezone = null, hostTimezone = null) {
   try {
     // date를 Date 객체로 변환
     const dateObj = new Date(date);
     
-    // 위치 감지
-    const location = await detectLocation(dateObj);
-    console.log(`Detected location for ${date}: ${location}`);
-    console.log(`User timezone: ${userTimezone}`);
+    // hostTimezone이 제공되면 사용, 아니면 위치 감지
+    let workStart, workEnd, serverTimezone;
     
-    // Get recurring breaks (removed for now - was causing delays)
-
-    // 위치에 따른 근무시간 설정
-    let workStart, workEnd, timezone;
-    
-    if (location === 'KR') {
-      // 한국 근무시간: 오전 8시 ~ 오후 9시 (KST)
+    if (hostTimezone) {
+      // 호스트가 설정한 시간대 사용
+      serverTimezone = hostTimezone;
       workStart = 8;
       workEnd = 21;
-      timezone = 'Asia/Seoul';
+      console.log(`Using host timezone: ${hostTimezone}`);
     } else {
-      // 미국 근무시간: 오전 8시 ~ 오후 9시 (PST/PDT)
-      workStart = 8;
-      workEnd = 21;
-      timezone = 'America/Los_Angeles';
+      // 위치 감지 (fallback)
+      const location = await detectLocation(dateObj);
+      console.log(`Detected location for ${date}: ${location}`);
+      
+      if (location === 'KR') {
+        // 한국 근무시간: 오전 8시 ~ 오후 9시 (KST)
+        workStart = 8;
+        workEnd = 21;
+        serverTimezone = 'Asia/Seoul';
+      } else {
+        // 미국 근무시간: 오전 8시 ~ 오후 9시 (PST/PDT)
+        workStart = 8;
+        workEnd = 21;
+        serverTimezone = 'America/Los_Angeles';
+      }
     }
+    
+    console.log(`User timezone: ${userTimezone}`);
 
-    // 사용자가 선택한 날짜를 서버 시간대 기준으로 변환
-    // 예: 캘리포니아 사용자가 8월 9일 선택 -> 한국 시간으로는 8월 9일-10일에 걸침
+    // 사용자 시간대가 제공되지 않으면 서버 시간대를 사용
+    const effectiveUserTimezone = userTimezone || serverTimezone;
+    
+    // 사용자가 선택한 날짜를 사용자 시간대 기준으로 설정
     const dateStr = dateObj.toLocaleDateString('en-CA'); // YYYY-MM-DD format
     
-    // 오피스 시간을 해당 시간대의 시간으로 설정
-    // 예: 한국 오전 8시 = 2025-08-09T08:00:00+09:00
-    // 예: 미국 오전 8시 = 2025-08-09T08:00:00-07:00 (PDT)
+    // 사용자가 선택한 날짜에 대해, 사용자 시간대 기준으로 하루의 시작과 끝을 계산
+    const userDayStart = new Date(`${dateStr}T00:00:00`);
+    const userDayEnd = new Date(`${dateStr}T23:59:59`);
     
     // 시간대별 오프셋 계산 (분 단위)
     const getTimezoneOffset = (tz, dateToCheck) => {
@@ -149,35 +158,53 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
       return 0;
     };
     
-    const checkDate = new Date(`${dateStr}T12:00:00`);
-    const tzOffsetMinutes = getTimezoneOffset(timezone, checkDate);
+    // 사용자 시간대 오프셋 계산
+    const userTzOffset = getTimezoneOffset(effectiveUserTimezone, userDayStart);
+    const serverTzOffset = getTimezoneOffset(serverTimezone, userDayStart);
     
-    // 오피스 시간을 UTC로 변환
-    const startOfDay = new Date(`${dateStr}T${String(workStart).padStart(2, '0')}:00:00`);
-    const endOfDay = new Date(`${dateStr}T${String(workEnd).padStart(2, '0')}:00:00`);
+    // 사용자가 선택한 날짜를 UTC로 변환
+    const userDayStartUTC = new Date(userDayStart);
+    userDayStartUTC.setMinutes(userDayStartUTC.getMinutes() - userTzOffset);
+    const userDayEndUTC = new Date(userDayEnd);
+    userDayEndUTC.setMinutes(userDayEndUTC.getMinutes() - userTzOffset);
     
-    // 시간대 오프셋 적용 (local time -> UTC)
-    startOfDay.setMinutes(startOfDay.getMinutes() - tzOffsetMinutes);
-    endOfDay.setMinutes(endOfDay.getMinutes() - tzOffsetMinutes);
+    // 서버(현 위치)의 근무시간을 서버 시간대 기준으로 설정
+    // 며칠에 걸쳐 있을 수 있으므로, 사용자 날짜 범위를 커버하는 서버 날짜 범위 계산
+    const serverSearchStart = new Date(userDayStartUTC);
+    serverSearchStart.setHours(serverSearchStart.getHours() - 24);
+    const serverSearchEnd = new Date(userDayEndUTC);
+    serverSearchEnd.setHours(serverSearchEnd.getHours() + 24);
     
-    console.log(`Working hours for ${dateStr} in ${timezone}:`);
-    console.log(`- Start: ${startOfDay.toISOString()} (${workStart}:00 local)`);
-    console.log(`- End: ${endOfDay.toISOString()} (${workEnd}:00 local)`);
-
-    // 사용자 시간대를 고려하여 캘린더 조회 범위 확장
-    // 예: 캘리포니아 사용자가 8월 9일 선택 시, 한국 캘린더는 8월 9일-10일 범위를 조회해야 함
-    let calendarSearchStart = new Date(startOfDay);
-    let calendarSearchEnd = new Date(endOfDay);
+    // 서버 근무시간을 UTC로 변환
+    const serverWorkingSlots = [];
+    const currentDate = new Date(serverSearchStart);
+    currentDate.setHours(0, 0, 0, 0);
     
-    // 사용자와 서버 시간대가 다른 경우, 조회 범위를 하루 더 확장
-    if (userTimezone && userTimezone !== timezone) {
-      // 앞뒤로 24시간씩 확장하여 시간대 차이 커버
-      calendarSearchStart.setHours(calendarSearchStart.getHours() - 24);
-      calendarSearchEnd.setHours(calendarSearchEnd.getHours() + 24);
-      console.log(`Extended calendar search range for timezone difference:`);
-      console.log(`- Search start: ${calendarSearchStart.toISOString()}`);
-      console.log(`- Search end: ${calendarSearchEnd.toISOString()}`);
+    while (currentDate <= serverSearchEnd) {
+      const dayStr = currentDate.toISOString().split('T')[0];
+      const dayStart = new Date(`${dayStr}T${String(workStart).padStart(2, '0')}:00:00`);
+      const dayEnd = new Date(`${dayStr}T${String(workEnd).padStart(2, '0')}:00:00`);
+      
+      // 서버 시간대로 UTC 변환
+      dayStart.setMinutes(dayStart.getMinutes() - serverTzOffset);
+      dayEnd.setMinutes(dayEnd.getMinutes() - serverTzOffset);
+      
+      serverWorkingSlots.push({ start: dayStart, end: dayEnd });
+      currentDate.setDate(currentDate.getDate() + 1);
     }
+    
+    console.log(`User selected date: ${dateStr} in ${effectiveUserTimezone}`);
+    console.log(`Server working hours in ${serverTimezone}:`);
+    serverWorkingSlots.forEach(slot => {
+      console.log(`- ${slot.start.toISOString()} to ${slot.end.toISOString()}`);
+    });
+
+    // 캘린더 조회 범위는 서버 근무시간 범위 전체
+    const calendarSearchStart = serverSearchStart;
+    const calendarSearchEnd = serverSearchEnd;
+    console.log(`Calendar search range:`);
+    console.log(`- Search start: ${calendarSearchStart.toISOString()}`);
+    console.log(`- Search end: ${calendarSearchEnd.toISOString()}`);
 
     const events = await calendar.events.list({
       calendarId: 'primary',
@@ -185,7 +212,7 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
       timeMax: calendarSearchEnd.toISOString(),
       singleEvents: true,
       orderBy: 'startTime',
-      timeZone: timezone
+      timeZone: serverTimezone
     });
 
     console.log(`Found ${events.data.items.length} events for ${dateStr}:`);
@@ -205,15 +232,17 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
     });
 
     const availableSlots = [];
-    let currentTime = new Date(startOfDay);
-
-    let slotCount = 0;
-    while (currentTime < endOfDay) {
+    
+    // 모든 서버 근무시간 슬롯에 대해 처리
+    for (const workingSlot of serverWorkingSlots) {
+      let currentTime = new Date(workingSlot.start);
+      
+      while (currentTime < workingSlot.end) {
       const slotEnd = new Date(currentTime.getTime() + duration * 60000);
       
-      // 한국 시간으로 8시와 10시30분 슬롯 체크
-      const localHour = new Date(currentTime.toLocaleString("en-US", {timeZone: timezone})).getHours();
-      const localMinutes = new Date(currentTime.toLocaleString("en-US", {timeZone: timezone})).getMinutes();
+        // 서버 시간으로 8시와 10시30분 슬롯 체크
+        const localHour = new Date(currentTime.toLocaleString("en-US", {timeZone: serverTimezone})).getHours();
+        const localMinutes = new Date(currentTime.toLocaleString("en-US", {timeZone: serverTimezone})).getMinutes();
       
       if ((localHour === 8 && localMinutes === 0) || (localHour === 10 && localMinutes === 30)) {
         console.log(`\nChecking slot at ${localHour}:${String(localMinutes).padStart(2, '0')} local time:`);
@@ -236,41 +265,37 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
         return blocked;
       });
 
-      // 현재 시간 확인 (과거 슬롯 제외)
-      const now = new Date();
-      const isInPast = slotEnd <= now;
-      
-      // 디버깅용 로그 (첫 몇 개 슬롯만)
-      if (slotCount < 3) {
-        console.log(`  Slot ${slotCount + 1}: ${currentTime.toISOString()} to ${slotEnd.toISOString()}`);
-        console.log(`    - Now: ${now.toISOString()}`);
-        console.log(`    - Is in past? ${isInPast}`);
-        console.log(`    - Is blocked? ${isBlocked}`);
-      }
-      
-      if (!isBlocked && slotEnd <= endOfDay && !isInPast) {
-        // Check time of day filter
-        const slotHour = new Date(currentTime.toLocaleString("en-US", {timeZone: timezone})).getHours();
+        // 현재 시간 확인 (과거 슬롯 제외)
+        const now = new Date();
+        const isInPast = slotEnd <= now;
         
-        let includeSlot = true;
-        if (timeOfDay === 'morning' && slotHour >= 12) {
-          includeSlot = false;
-        } else if (timeOfDay === 'afternoon' && slotHour < 12) {
-          includeSlot = false;
-        }
+        // 슬롯이 사용자가 선택한 날짜 범위에 포함되는지 확인
+        const slotInUserDay = (currentTime >= userDayStartUTC && currentTime < userDayEndUTC) ||
+                             (slotEnd > userDayStartUTC && slotEnd <= userDayEndUTC);
         
-        if (includeSlot) {
-          availableSlots.push({
-            start: currentTime.toISOString(),
-            end: slotEnd.toISOString(),
-            location: location,
-            timezone: timezone
-          });
-          slotCount++;
+        if (!isBlocked && slotEnd <= workingSlot.end && !isInPast && slotInUserDay) {
+          // Check time of day filter
+          const slotHour = new Date(currentTime.toLocaleString("en-US", {timeZone: serverTimezone})).getHours();
+        
+          let includeSlot = true;
+          if (timeOfDay === 'morning' && slotHour >= 12) {
+            includeSlot = false;
+          } else if (timeOfDay === 'afternoon' && slotHour < 12) {
+            includeSlot = false;
+          }
+          
+          if (includeSlot) {
+            availableSlots.push({
+              start: currentTime.toISOString(),
+              end: slotEnd.toISOString(),
+              location: location,
+              timezone: serverTimezone
+            });
+          }
         }
-      }
 
-      currentTime = new Date(currentTime.getTime() + 30 * 60000);
+        currentTime = new Date(currentTime.getTime() + 30 * 60000);
+      }
     }
 
     console.log(`Total available slots: ${availableSlots.length}`);
@@ -287,16 +312,18 @@ async function createEvent(eventDetails) {
     const location = await detectLocation(new Date(eventDetails.start));
     const timezone = location === 'KR' ? 'Asia/Seoul' : 'America/Los_Angeles';
 
+    // ISO string이 이미 UTC 시간대를 포함하고 있으므로,
+    // 그대로 사용하되 timeZone은 표시용으로만 사용
     const event = {
       summary: eventDetails.summary,
       description: eventDetails.description,
       start: {
-        dateTime: eventDetails.start,
-        timeZone: timezone
+        dateTime: eventDetails.start
+        // timeZone 제거 - ISO string이 이미 시간대 정보를 포함
       },
       end: {
-        dateTime: eventDetails.end,
-        timeZone: timezone
+        dateTime: eventDetails.end
+        // timeZone 제거 - ISO string이 이미 시간대 정보를 포함
       },
       attendees: [
         { email: eventDetails.attendeeEmail }

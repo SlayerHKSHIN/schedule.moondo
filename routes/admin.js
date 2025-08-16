@@ -118,7 +118,7 @@ router.get('/recurring-breaks', (req, res) => {
 // Add location for a specific date or date range
 router.post('/location', async (req, res) => {
   console.log('Location request body:', req.body);
-  const { startDate, endDate, morningLocation, afternoonLocation } = req.body;
+  const { startDate, endDate, morningLocation, afternoonLocation, timezone } = req.body;
   
   if (!startDate || (!morningLocation?.trim() && !afternoonLocation?.trim())) {
     console.log('Validation failed:', { startDate, morningLocation, afternoonLocation });
@@ -138,10 +138,11 @@ router.post('/location', async (req, res) => {
     // Get existing data for this date
     const existingData = locationData.get(dateKey) || {};
     
-    // Update morning and/or afternoon locations
+    // Update morning and/or afternoon locations  
     const updatedData = {
       morning: morningLocation?.trim() || existingData.morning || null,
-      afternoon: afternoonLocation?.trim() || existingData.afternoon || null
+      afternoon: afternoonLocation?.trim() || existingData.afternoon || null,
+      timezone: timezone || existingData.timezone || 'Asia/Seoul' // 시간대 저장
     };
     
     locationData.set(dateKey, updatedData);
@@ -161,32 +162,63 @@ router.post('/location', async (req, res) => {
   });
 });
 
+// Get all bookings
+router.get('/bookings', async (req, res) => {
+  try {
+    // In production, this would query from a database
+    // For now, return empty array since we're not storing bookings
+    res.json([]);
+  } catch (error) {
+    console.error('Error fetching bookings:', error);
+    res.status(500).json({ error: 'Failed to fetch bookings' });
+  }
+});
+
+// Get availability settings
+router.get('/availability', (req, res) => {
+  // Return default availability settings
+  // In production, this would be stored in a database
+  res.json({
+    Monday: { enabled: true, start: '09:00', end: '17:00' },
+    Tuesday: { enabled: true, start: '09:00', end: '17:00' },
+    Wednesday: { enabled: true, start: '09:00', end: '17:00' },
+    Thursday: { enabled: true, start: '09:00', end: '17:00' },
+    Friday: { enabled: true, start: '09:00', end: '17:00' },
+    Saturday: { enabled: true, start: '09:00', end: '17:00' },
+    Sunday: { enabled: true, start: '09:00', end: '17:00' }
+  });
+});
+
+// Save availability settings
+router.post('/availability', (req, res) => {
+  // In production, save to database
+  res.json({ message: 'Availability settings saved successfully' });
+});
+
 // Get all locations
 router.get('/locations', (req, res) => {
-  // Convert the new format to a list that's easier to display
-  const locationsList = [];
-  const sortedEntries = Array.from(locationData.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  // Return the data directly as an object (matching the format expected by frontend)
+  const locationsObject = {};
   
-  for (const [date, data] of sortedEntries) {
+  for (const [date, data] of locationData.entries()) {
     // Handle both old and new format
     if (data.location) {
       // Old format
-      locationsList.push({
-        date,
+      locationsObject[date] = {
         morning: data.timeOfDay === 'morning' || data.timeOfDay === 'all' ? data.location : null,
         afternoon: data.timeOfDay === 'afternoon' || data.timeOfDay === 'all' ? data.location : null
-      });
+      };
     } else {
       // New format
-      locationsList.push({
-        date,
+      locationsObject[date] = {
         morning: data.morning,
-        afternoon: data.afternoon
-      });
+        afternoon: data.afternoon,
+        timezone: data.timezone || 'Asia/Seoul'
+      };
     }
   }
   
-  res.json({ locations: locationsList });
+  res.json(locationsObject);
 });
 
 // Get location for a specific date
@@ -195,7 +227,7 @@ router.get('/location/:date', (req, res) => {
   const locationInfo = locationData.get(date);
   
   if (!locationInfo) {
-    res.json({ date, morning: null, afternoon: null });
+    res.json({ date, morning: null, afternoon: null, timezone: 'Asia/Seoul' });
     return;
   }
   
@@ -212,7 +244,8 @@ router.get('/location/:date', (req, res) => {
     res.json({ 
       date, 
       morning: locationInfo.morning || null,
-      afternoon: locationInfo.afternoon || null
+      afternoon: locationInfo.afternoon || null,
+      timezone: locationInfo.timezone || 'Asia/Seoul'
     });
   }
 });

@@ -3,10 +3,6 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import MainApp from './MainApp';
-import { preventZoom } from './utils/preventZoom';
-
-// 모바일 줌 방지
-preventZoom();
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

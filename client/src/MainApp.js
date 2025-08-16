@@ -1,14 +1,37 @@
 import React from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { ThemeProvider } from 'styled-components';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import App from './App';
-import Admin from './pages/Admin';
+import { theme } from './styles/theme';
+import { GlobalStyles } from './styles/GlobalStyles';
 
 function MainApp() {
   return (
-    <Routes>
-      <Route path="/" element={<App />} />
-      <Route path="/admin" element={<Admin />} />
-    </Routes>
+    <ThemeProvider theme={theme}>
+      <GlobalStyles />
+      <App />
+      <ToastContainer
+        position="bottom-center"
+        autoClose={3000}
+        hideProgressBar
+        newestOnTop
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        style={{
+          fontSize: '14px'
+        }}
+        toastStyle={{
+          backgroundColor: theme.colors.background.paper,
+          color: theme.colors.text.primary,
+          borderRadius: theme.borderRadius.md,
+          boxShadow: theme.shadows.lg
+        }}
+      />
+    </ThemeProvider>
   );
 }
 
