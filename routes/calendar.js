@@ -14,29 +14,38 @@ router.get('/available-slots', async (req, res) => {
     const axios = require('axios');
     let morningLocation = null;
     let afternoonLocation = null;
+    let hostTimezone = 'Asia/Seoul'; // 기본값
     
     try {
-      const locationResponse = await axios.get(`http://localhost:4312/api/admin/location/${date}`);
+      const port = process.env.PORT || 4312;
+      const locationResponse = await axios.get(`http://localhost:${port}/api/admin/location/${date}`);
       morningLocation = locationResponse.data.morning;
       afternoonLocation = locationResponse.data.afternoon;
+      hostTimezone = locationResponse.data.timezone || 'Asia/Seoul';
     } catch (err) {
       console.log('Could not fetch location data');
     }
 
     // No filtering by timeOfDay - show all available slots
-    // Pass user timezone to getAvailableSlots
-    const slots = await getAvailableSlots(date, duration ? parseInt(duration) : 30, 'all', userTimezone);
-    const location = await detectLocation(new Date(date));
+    // Pass both user timezone and host timezone to getAvailableSlots
+    const slots = await getAvailableSlots(date, duration ? parseInt(duration) : 30, 'all', userTimezone, hostTimezone);
     
     // 위치 정보 추가
     const locationInfo = {
-      current: location,
-      timezone: location === 'KR' ? 'Asia/Seoul' : 'America/Los_Angeles',
-      workingHours: location === 'KR' 
-        ? { start: '08:00', end: '21:00', zone: 'KST' }
-        : { start: '08:00', end: '21:00', zone: 'PST/PDT' },
-      morningLocation: morningLocation,
-      afternoonLocation: afternoonLocation
+      current: hostTimezone === 'Asia/Seoul' ? 'KR' : 'US',
+      timezone: hostTimezone,
+      workingHours: {
+        start: '08:00',
+        end: '21:00',
+        zone: hostTimezone === 'Asia/Seoul' ? 'KST' : 
+              hostTimezone === 'America/Los_Angeles' ? 'PST/PDT' : 
+              hostTimezone === 'America/New_York' ? 'EST/EDT' : 'GMT'
+      },
+      locationData: {
+        morning: morningLocation,
+        afternoon: afternoonLocation
+      },
+      hostName: 'Hyun' // 호스트 이름 추가
     };
     
     res.json({ slots, location: locationInfo });
