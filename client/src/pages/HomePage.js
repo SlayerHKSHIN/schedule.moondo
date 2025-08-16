@@ -4,6 +4,7 @@ import Calendar from 'react-calendar';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import { theme } from '../styles/theme';
+import AuthButton from '../components/AuthButton';
 import 'react-calendar/dist/Calendar.css';
 
 const Container = styled.div`
@@ -383,6 +384,27 @@ function HomePage() {
   const [locationInfo, setLocationInfo] = useState(null);
   const [userTimezone, setUserTimezone] = useState('');
   const [hostName, setHostName] = useState('Hyun'); // 호스트 이름 상태 추가
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
+
+  // Check authentication status
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const response = await axios.get('/api/auth/user', {
+          withCredentials: true
+        });
+        if (response.data.authenticated) {
+          setIsAuthenticated(true);
+          setUser(response.data.user);
+          setHostName(response.data.user.name || 'Calendar Owner');
+        }
+      } catch (error) {
+        console.error('Auth check error:', error);
+      }
+    };
+    checkAuth();
+  }, []);
 
   const fetchAvailableSlots = async (date) => {
     try {
@@ -394,7 +416,15 @@ function HomePage() {
       
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       setUserTimezone(timezone);
-      const response = await axios.get(`/api/calendar/available-slots?date=${formattedDate}&timezone=${encodeURIComponent(timezone)}`);
+      
+      // Use user-specific endpoint if authenticated, otherwise use default
+      const endpoint = isAuthenticated 
+        ? `/api/user/calendar/available-slots?date=${formattedDate}&timezone=${encodeURIComponent(timezone)}`
+        : `/api/calendar/available-slots?date=${formattedDate}&timezone=${encodeURIComponent(timezone)}`;
+      
+      const response = await axios.get(endpoint, {
+        withCredentials: true
+      });
       
       // Extract time strings from slot objects
       const slots = response.data.slots || [];
@@ -427,7 +457,8 @@ function HomePage() {
 
   useEffect(() => {
     fetchAvailableSlots(selectedDate);
-  }, [selectedDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, isAuthenticated]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -441,11 +472,27 @@ function HomePage() {
       setLoading(true);
       const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       
-      const response = await axios.post('/api/booking/create', {
-        ...formData,
-        date: selectedDate.toISOString().split('T')[0],
-        time: selectedSlot,
-        timezone: userTimezone
+      // Use user-specific endpoint if authenticated
+      const endpoint = isAuthenticated ? '/api/user/calendar/book' : '/api/booking/create';
+      const payload = isAuthenticated 
+        ? {
+            guestName: formData.name,
+            guestEmail: formData.email,
+            date: selectedDate.toISOString().split('T')[0],
+            time: selectedSlot,
+            purpose: formData.purpose,
+            meetingType: formData.meetingType,
+            timezone: userTimezone
+          }
+        : {
+            ...formData,
+            date: selectedDate.toISOString().split('T')[0],
+            time: selectedSlot,
+            timezone: userTimezone
+          };
+      
+      const response = await axios.post(endpoint, payload, {
+        withCredentials: true
       });
 
       setBookingDetails(response.data);
@@ -471,6 +518,7 @@ function HomePage() {
 
   return (
     <Container>
+      <AuthButton />
       <Header>
         <Title>Schedule a Meeting with {hostName}</Title>
         <Subtitle>Choose a convenient time for our conversation</Subtitle>
