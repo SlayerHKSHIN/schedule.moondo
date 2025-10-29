@@ -1,16 +1,61 @@
 const { google } = require('googleapis');
+const tokenManager = require('./tokenManager');
+const serviceAuth = require('./serviceAccountAuth');
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
+// Use Service Account for reading, OAuth for creating events with attendees
+const USE_SERVICE_ACCOUNT_FOR_READ = true;
+const USE_OAUTH_FOR_CREATE = true; // Always use OAuth for event creation to support attendees
 
-oauth2Client.setCredentials({
-  refresh_token: process.env.GOOGLE_REFRESH_TOKEN
-});
+// Calendar ID to use (needed for Service Account)
+const CALENDAR_ID = 'haneul96@gmail.com';
 
-const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+// Initialize Service Account if enabled
+let serviceAccountInitialized = false;
+
+const initializeServiceAccount = async () => {
+  if (USE_SERVICE_ACCOUNT_FOR_READ && !serviceAccountInitialized) {
+    try {
+      await serviceAuth.initialize();
+      serviceAccountInitialized = true;
+      console.log('Service Account authentication initialized for reading');
+    } catch (error) {
+      console.error('Failed to initialize Service Account, falling back to OAuth:', error);
+      return false;
+    }
+  }
+  return serviceAccountInitialized;
+};
+
+// Get calendar instance for reading operations
+const getCalendarForRead = async () => {
+  if (USE_SERVICE_ACCOUNT_FOR_READ) {
+    await initializeServiceAccount();
+    if (serviceAccountInitialized) {
+      return serviceAuth.getCalendar();
+    }
+  }
+  // Fallback to OAuth
+  const oauth2Client = await tokenManager.getValidClient();
+  return google.calendar({ version: 'v3', auth: oauth2Client });
+};
+
+// Get calendar instance for creating events (try OAuth first, fallback to service account)
+const getCalendarForCreate = async () => {
+  try {
+    // Try OAuth first for attendee support
+    const oauth2Client = await tokenManager.getValidClient();
+    // OAuth client is already validated and refreshed if needed
+    return google.calendar({ version: 'v3', auth: oauth2Client });
+  } catch (error) {
+    console.log('OAuth failed, falling back to Service Account for event creation:', error.message);
+    // Fallback to Service Account
+    await initializeServiceAccount();
+    if (serviceAccountInitialized) {
+      return serviceAuth.getCalendar();
+    }
+    throw new Error('Both OAuth and Service Account authentication failed');
+  }
+};
 
 // 비행기 일정 관련 키워드
 const FLIGHT_KEYWORDS = ['flight', '비행', '✈️', 'airport', '공항', 'boarding', '탑승'];
@@ -31,8 +76,9 @@ async function detectLocation(date) {
     const searchStart = new Date(date);
     searchStart.setDate(searchStart.getDate() - 7);
     
+    const calendar = await getCalendarForRead();
     const events = await calendar.events.list({
-      calendarId: 'primary',
+      calendarId: USE_SERVICE_ACCOUNT_FOR_READ ? CALENDAR_ID : 'primary',
       timeMin: searchStart.toISOString(),
       timeMax: new Date(date.getTime() + 24 * 60 * 60 * 1000).toISOString(),
       singleEvents: true,
@@ -80,8 +126,8 @@ async function detectLocation(date) {
       }
     }
 
-    // 8월 31일 이전은 한국으로 가정
-    const aug31 = new Date('2025-08-31');
+    // 2024년 8월 31일 이전은 한국으로 가정
+    const aug31 = new Date('2024-08-31');
     if (date <= aug31) {
       currentLocation = 'KR';
     }
@@ -107,18 +153,20 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
     // hostTimezone이 제공되면 사용, 아니면 위치 감지
     let workStart, workEnd, serverTimezone;
     
+    let detectedLocation;
     if (hostTimezone) {
       // 호스트가 설정한 시간대 사용
       serverTimezone = hostTimezone;
       workStart = 8;
       workEnd = 21;
+      detectedLocation = hostTimezone.includes('Seoul') ? 'KR' : 'US';
       console.log(`Using host timezone: ${hostTimezone}`);
     } else {
       // 위치 감지 (fallback)
-      const location = await detectLocation(dateObj);
-      console.log(`Detected location for ${date}: ${location}`);
+      detectedLocation = await detectLocation(dateObj);
+      console.log(`Detected location for ${date}: ${detectedLocation}`);
       
-      if (location === 'KR') {
+      if (detectedLocation === 'KR') {
         // 한국 근무시간: 오전 8시 ~ 오후 9시 (KST)
         workStart = 8;
         workEnd = 21;
@@ -206,8 +254,9 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
     console.log(`- Search start: ${calendarSearchStart.toISOString()}`);
     console.log(`- Search end: ${calendarSearchEnd.toISOString()}`);
 
+    const calendar = await getCalendarForRead();
     const events = await calendar.events.list({
-      calendarId: 'primary',
+      calendarId: USE_SERVICE_ACCOUNT_FOR_READ ? CALENDAR_ID : 'primary',
       timeMin: calendarSearchStart.toISOString(),
       timeMax: calendarSearchEnd.toISOString(),
       singleEvents: true,
@@ -288,7 +337,7 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
             availableSlots.push({
               start: currentTime.toISOString(),
               end: slotEnd.toISOString(),
-              location: location,
+              location: detectedLocation,
               timezone: serverTimezone
             });
           }
@@ -308,26 +357,30 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
 
 async function createEvent(eventDetails) {
   try {
+    console.log(`[CREATE_EVENT] Starting event creation with details:`, JSON.stringify(eventDetails, null, 2));
+    
     // 이벤트 날짜의 위치 감지
     const location = await detectLocation(new Date(eventDetails.start));
     const timezone = location === 'KR' ? 'Asia/Seoul' : 'America/Los_Angeles';
+    
+    console.log(`[CREATE_EVENT] Detected location: ${location}, Timezone: ${timezone}`);
 
     // ISO string이 이미 UTC 시간대를 포함하고 있으므로,
     // 그대로 사용하되 timeZone은 표시용으로만 사용
+    
+    // Always use OAuth for event creation to support attendees
     const event = {
       summary: eventDetails.summary,
       description: eventDetails.description,
       start: {
         dateTime: eventDetails.start
-        // timeZone 제거 - ISO string이 이미 시간대 정보를 포함
       },
       end: {
         dateTime: eventDetails.end
-        // timeZone 제거 - ISO string이 이미 시간대 정보를 포함
       },
-      attendees: [
-        { email: eventDetails.attendeeEmail }
-      ],
+      attendees: eventDetails.attendees 
+        ? eventDetails.attendees.map(email => ({ email }))
+        : [{ email: eventDetails.attendeeEmail }],
       reminders: {
         useDefault: false,
         overrides: [
@@ -366,12 +419,23 @@ async function createEvent(eventDetails) {
       }
     }
 
+    console.log(`[CREATE_EVENT] Calling Google Calendar API with event:`, JSON.stringify(event, null, 2));
+    console.log(`[CREATE_EVENT] Getting calendar client for event creation`);
+
+    const calendar = await getCalendarForCreate();
+    // Determine calendar ID based on which auth method is being used
+    const isUsingServiceAccount = serviceAccountInitialized;
+    const calendarId = isUsingServiceAccount ? CALENDAR_ID : 'primary';
+    console.log(`[CREATE_EVENT] Using ${isUsingServiceAccount ? 'Service Account' : 'OAuth'} for event creation with calendar ID: ${calendarId}`);
+
     const response = await calendar.events.insert({
-      calendarId: 'primary',
+      calendarId: calendarId,
       resource: event,
       sendNotifications: true,
       conferenceDataVersion: eventDetails.meetingType === 'video' ? 1 : 0
     });
+    
+    console.log(`[CREATE_EVENT] Google Calendar API response:`, JSON.stringify(response.data, null, 2));
 
     return response.data;
   } catch (error) {
@@ -380,8 +444,56 @@ async function createEvent(eventDetails) {
   }
 }
 
+// Get upcoming events from Google Calendar
+async function getUpcomingEvents(limit = 3) {
+  try {
+    const now = new Date();
+    const calendar = await getCalendarForRead();
+    const response = await calendar.events.list({
+      calendarId: USE_SERVICE_ACCOUNT_FOR_READ ? CALENDAR_ID : 'primary',
+      timeMin: now.toISOString(),
+      maxResults: limit,
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
+
+    const events = response.data.items;
+    if (!events || events.length === 0) {
+      return [];
+    }
+
+    return events.map(event => {
+      const start = event.start.dateTime || event.start.date;
+      const end = event.end.dateTime || event.end.date;
+      
+      // Parse attendees
+      const attendees = event.attendees || [];
+      const attendeeNames = attendees
+        .filter(a => !a.self)
+        .map(a => a.displayName || a.email)
+        .join(', ');
+
+      return {
+        id: event.id,
+        summary: event.summary || 'No title',
+        start: start,
+        end: end,
+        location: event.location || '',
+        description: event.description || '',
+        attendees: attendeeNames,
+        meetLink: event.hangoutLink || '',
+        status: event.status
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching upcoming events:', error);
+    return [];
+  }
+}
+
 module.exports = {
   getAvailableSlots,
   createEvent,
-  detectLocation
+  detectLocation,
+  getUpcomingEvents
 };

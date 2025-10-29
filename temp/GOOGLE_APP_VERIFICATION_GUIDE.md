@@ -24,10 +24,10 @@ This guide explains how to publish your Google OAuth app from test mode to produ
    - **App name**: Schedule GLTR-OUS
    - **User support email**: Your email
    - **App logo**: Upload if available (optional)
-   - **Application home page**: `https://schedule.gltr-ous.us`
-   - **Application privacy policy link**: `https://schedule.gltr-ous.us/privacy`
-   - **Application terms of service link**: `https://schedule.gltr-ous.us/terms`
-   - **Authorized domains**: Add `gltr-ous.us`
+   - **Application home page**: `https://hyun-schedule.moondo.ai`
+   - **Application privacy policy link**: `https://hyun-schedule.moondo.ai/privacy`
+   - **Application terms of service link**: `https://hyun-schedule.moondo.ai/terms`
+   - **Authorized domains**: Add `moondo.ai`
    - **Developer contact information**: Your email
 
 ### 2. Configure Scopes

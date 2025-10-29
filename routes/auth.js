@@ -3,6 +3,7 @@ const router = express.Router();
 const { google } = require('googleapis');
 const jwt = require('jsonwebtoken');
 const userStore = require('../utils/userStore');
+const tokenManager = require('../utils/tokenManager');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
@@ -64,7 +65,20 @@ router.get('/google/callback', async (req, res) => {
     };
     
     const savedUser = userStore.saveUser(userData);
-    
+
+    // Also sync tokens to TokenManager for calendar operations
+    try {
+      tokenManager.saveToken({
+        refresh_token: tokens.refresh_token,
+        access_token: tokens.access_token,
+        expiry_date: tokens.expiry_date
+      });
+      console.log('Tokens synced to TokenManager');
+    } catch (syncError) {
+      console.warn('Could not sync tokens to TokenManager:', syncError.message);
+      // Non-critical, continue
+    }
+
     // Create JWT token for session
     const sessionToken = jwt.sign(
       { 

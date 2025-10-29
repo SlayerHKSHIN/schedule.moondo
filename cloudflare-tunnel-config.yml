@@ -1,0 +1,33 @@
+# Cloudflare Tunnel Configuration for hyun-schedule
+# This file configures the tunnel to forward traffic to the local Express server
+
+# Tunnel credentials will be auto-populated by cloudflared
+# Run: cloudflared tunnel create hyun-schedule
+
+tunnel: hyun-schedule
+credentials-file: /home/hyun/.cloudflared/b5af78a3-6a5b-4bef-80ce-970780d9e789.json
+
+# Ingress rules - routes traffic from Cloudflare to local services
+ingress:
+  # Main application - forwards to Express server on port 4312
+  # Express serves both the React frontend and API endpoints
+  - hostname: hyun-schedule.moondo.ai
+    service: http://localhost:4312
+    originRequest:
+      # Preserve original host header
+      noTLSVerify: false
+      # Connection settings
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      # HTTP/2 support
+      http2Origin: false
+
+  # Catch-all rule (required) - returns 404 for unknown hostnames
+  - service: http_status:404
+
+# Optional: Logging configuration
+# loglevel: info
+# logfile: /var/log/cloudflared.log
+
+# Optional: Metrics
+# metrics: localhost:2000

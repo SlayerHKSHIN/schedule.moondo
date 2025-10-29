@@ -2,16 +2,20 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs').promises;
 const path = require('path');
-const { createEvent, detectLocation } = require('../utils/googleCalendar');
+const { google } = require('googleapis');
+const { createEvent, detectLocation, getUpcomingEvents } = require('../utils/googleCalendar');
+const tokenManager = require('../utils/tokenManager');
 
 // Store recurring break times (in production, use a database)
 const recurringBreaks = [];
 
-// File path for location data
+// File paths for data
 const LOCATIONS_FILE = path.join(__dirname, '..', 'data', 'locations.json');
+const AVAILABILITY_FILE = path.join(__dirname, '..', 'data', 'availability.json');
 
-// Initialize location data from file
+// Initialize data from files
 let locationData = new Map();
+let availabilityData = {};
 
 // Load location data from file on startup
 async function loadLocationData() {
@@ -36,8 +40,40 @@ async function saveLocationData() {
   }
 }
 
+// Load availability data from file on startup
+async function loadAvailabilityData() {
+  try {
+    const data = await fs.readFile(AVAILABILITY_FILE, 'utf8');
+    availabilityData = JSON.parse(data);
+    console.log('Loaded availability data from backup');
+  } catch (error) {
+    console.log('No existing availability data found, using defaults');
+    // Set default availability
+    availabilityData = {
+      Monday: { enabled: true, start: '08:00', end: '21:00' },
+      Tuesday: { enabled: true, start: '08:00', end: '21:00' },
+      Wednesday: { enabled: true, start: '08:00', end: '21:00' },
+      Thursday: { enabled: true, start: '08:00', end: '21:00' },
+      Friday: { enabled: true, start: '08:00', end: '21:00' },
+      Saturday: { enabled: true, start: '08:00', end: '21:00' },
+      Sunday: { enabled: true, start: '08:00', end: '21:00' }
+    };
+  }
+}
+
+// Save availability data to file
+async function saveAvailabilityData() {
+  try {
+    await fs.writeFile(AVAILABILITY_FILE, JSON.stringify(availabilityData, null, 2));
+    console.log('Availability data saved to backup');
+  } catch (error) {
+    console.error('Error saving availability data:', error);
+  }
+}
+
 // Load data on startup
 loadLocationData();
+loadAvailabilityData();
 
 // Admin authentication
 router.post('/login', (req, res) => {
@@ -116,7 +152,7 @@ router.get('/recurring-breaks', (req, res) => {
 });
 
 // Add location for a specific date or date range
-router.post('/location', async (req, res) => {
+router.post('/locations', async (req, res) => {
   console.log('Location request body:', req.body);
   const { startDate, endDate, morningLocation, afternoonLocation, timezone } = req.body;
   
@@ -162,12 +198,73 @@ router.post('/location', async (req, res) => {
   });
 });
 
-// Get all bookings
+// Update location for a specific date or date range
+router.put('/locations', async (req, res) => {
+  console.log('Location update request body:', req.body);
+  const { startDate, endDate, morningLocation, afternoonLocation, timezone } = req.body;
+  
+  if (!startDate || (!morningLocation?.trim() && !afternoonLocation?.trim())) {
+    console.log('Validation failed:', { startDate, morningLocation, afternoonLocation });
+    return res.status(400).json({ error: 'Start date and at least one location are required' });
+  }
+  
+  // If no end date, treat as single day
+  const end = endDate || startDate;
+  
+  // Store each day in the range
+  const start = new Date(startDate);
+  const finish = new Date(end);
+  
+  while (start <= finish) {
+    const dateKey = start.toISOString().split('T')[0];
+    
+    // Get existing data for this date
+    const existingData = locationData.get(dateKey) || {};
+    
+    // Update morning and/or afternoon locations  
+    const updatedData = {
+      morning: morningLocation?.trim() || existingData.morning || null,
+      afternoon: afternoonLocation?.trim() || existingData.afternoon || null,
+      timezone: timezone || existingData.timezone || 'Asia/Seoul' // 시간대 저장
+    };
+    
+    locationData.set(dateKey, updatedData);
+    
+    start.setDate(start.getDate() + 1);
+  }
+  
+  // Save to file after updating
+  await saveLocationData();
+  
+  res.json({ 
+    message: 'Location updated successfully', 
+    startDate, 
+    endDate: endDate || startDate, 
+    morningLocation,
+    afternoonLocation
+  });
+});
+
+// Get upcoming bookings from Google Calendar
 router.get('/bookings', async (req, res) => {
   try {
-    // In production, this would query from a database
-    // For now, return empty array since we're not storing bookings
-    res.json([]);
+    // Fetch upcoming events from Google Calendar
+    const upcomingEvents = await getUpcomingEvents(10); // Get more events to filter
+    
+    // Filter to show only the next 3 relevant meetings
+    const filteredEvents = upcomingEvents
+      .filter(event => {
+        // Exclude all-day events and certain types of events
+        const hasTime = event.start.includes('T'); // Has specific time (not all-day)
+        const excludeKeywords = ['holiday', '휴일', 'birthday', '생일', 'reminder'];
+        const isExcluded = excludeKeywords.some(keyword => 
+          event.summary.toLowerCase().includes(keyword)
+        );
+        return hasTime && !isExcluded;
+      })
+      .slice(0, 3); // Take only first 3
+    
+    res.json(filteredEvents);
   } catch (error) {
     console.error('Error fetching bookings:', error);
     res.status(500).json({ error: 'Failed to fetch bookings' });
@@ -176,23 +273,42 @@ router.get('/bookings', async (req, res) => {
 
 // Get availability settings
 router.get('/availability', (req, res) => {
-  // Return default availability settings
-  // In production, this would be stored in a database
-  res.json({
-    Monday: { enabled: true, start: '09:00', end: '17:00' },
-    Tuesday: { enabled: true, start: '09:00', end: '17:00' },
-    Wednesday: { enabled: true, start: '09:00', end: '17:00' },
-    Thursday: { enabled: true, start: '09:00', end: '17:00' },
-    Friday: { enabled: true, start: '09:00', end: '17:00' },
-    Saturday: { enabled: true, start: '09:00', end: '17:00' },
-    Sunday: { enabled: true, start: '09:00', end: '17:00' }
-  });
+  // Return saved availability settings
+  res.json(availabilityData);
 });
 
 // Save availability settings
-router.post('/availability', (req, res) => {
-  // In production, save to database
-  res.json({ message: 'Availability settings saved successfully' });
+router.post('/availability', async (req, res) => {
+  try {
+    const newAvailability = req.body;
+    
+    // Validate the data structure
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    for (const day of days) {
+      if (!newAvailability[day] || 
+          typeof newAvailability[day].enabled !== 'boolean' ||
+          !newAvailability[day].start || 
+          !newAvailability[day].end) {
+        return res.status(400).json({ error: `Invalid availability data for ${day}` });
+      }
+    }
+    
+    // Include timezone if provided (default to Asia/Seoul if not)
+    if (!newAvailability.timezone) {
+      newAvailability.timezone = 'Asia/Seoul';
+    }
+    
+    // Update availability data
+    availabilityData = newAvailability;
+    
+    // Save to file
+    await saveAvailabilityData();
+    
+    res.json({ message: 'Availability settings saved successfully' });
+  } catch (error) {
+    console.error('Error saving availability:', error);
+    res.status(500).json({ error: 'Failed to save availability settings' });
+  }
 });
 
 // Get all locations
@@ -286,6 +402,53 @@ router.post('/locations/import', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to import data' });
+  }
+});
+
+// Token health check endpoint
+router.get('/token-status', async (req, res) => {
+  try {
+    const healthCheck = await tokenManager.checkTokenHealth();
+
+    res.json({
+      ...healthCheck,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error checking token status:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to check token status',
+      error: error.message
+    });
+  }
+});
+
+// Re-authentication URL generator
+router.get('/reauth-url', (req, res) => {
+  try {
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+
+    const scopes = [
+      'https://www.googleapis.com/auth/calendar',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile'
+    ];
+
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: scopes,
+      prompt: 'consent' // Force consent to get refresh token
+    });
+
+    res.json({ authUrl: url });
+  } catch (error) {
+    console.error('Error generating reauth URL:', error);
+    res.status(500).json({ error: 'Failed to generate auth URL' });
   }
 });
 

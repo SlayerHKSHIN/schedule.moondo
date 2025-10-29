@@ -11,12 +11,16 @@ const bookingRoutes = require('./routes/booking');
 const adminRoutes = require('./routes/admin');
 const { router: authRoutes } = require('./routes/auth');
 const userCalendarRoutes = require('./routes/userCalendar');
+const nlpRoutes = require('./routes/nlp');
+const tokenManager = require('./utils/tokenManager');
 
 const app = express();
 const PORT = process.env.PORT || 4312;
 
 app.use(cors({
-  origin: true,
+  origin: process.env.NODE_ENV === 'production'
+    ? 'https://hyun-schedule.moondo.ai'
+    : true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -42,6 +46,7 @@ app.use('/api/user/calendar', userCalendarRoutes); // User-specific calendar rou
 app.use('/api/calendar', calendarRoutes); // Legacy/admin calendar routes
 app.use('/api/booking', bookingRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/nlp', nlpRoutes); // Natural language processing routes
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'client/build')));
@@ -51,6 +56,34 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Check and refresh token on server startup
+async function startServer() {
+  try {
+    // Check token validity on startup and auto-refresh if needed
+    console.log('Checking OAuth token validity...');
+    const client = tokenManager.getClient();
+
+    if (client.credentials && client.credentials.refresh_token) {
+      try {
+        // Use getValidClient to automatically refresh if expired
+        await tokenManager.getValidClient();
+        console.log('OAuth token validated and refreshed if needed');
+      } catch (error) {
+        console.error('Warning: Could not refresh OAuth token:', error.message);
+        console.log('Please run: node scripts/auto-refresh-token.js setup');
+      }
+    } else {
+      console.warn('No OAuth refresh token found. Some features may be limited.');
+      console.log('To set up OAuth, run: node scripts/auto-refresh-token.js setup');
+    }
+  } catch (error) {
+    console.error('Error during token validation:', error);
+  }
+
+  // Start the server
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+startServer();

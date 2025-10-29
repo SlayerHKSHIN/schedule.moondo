@@ -31,7 +31,7 @@ pm2 restart schedule-app
 
 3. **도메인 선택하고 입력:**
    ```
-   gltr-ous.us
+   moondo.ai
    ```
 
 4. **TXT 레코드 받기 (예시):**
@@ -70,14 +70,14 @@ pm2 restart schedule-app
 
    **OAuth Consent Screen 페이지 2 (App domain):**
    ```
-   Application home page: https://schedule.gltr-ous.us
-   Application privacy policy link: https://schedule.gltr-ous.us/privacy
-   Application terms of service link: https://schedule.gltr-ous.us/terms
+   Application home page: https://hyun-schedule.moondo.ai
+   Application privacy policy link: https://hyun-schedule.moondo.ai/privacy
+   Application terms of service link: https://hyun-schedule.moondo.ai/terms
    ```
 
    **Authorized domains:**
    ```
-   gltr-ous.us
+   moondo.ai
    ```
    (+ 버튼 클릭해서 추가)
 
@@ -139,9 +139,9 @@ pm2 restart schedule-app
 
 ### 제출 전 마지막 체크:
 
-- [ ] `https://schedule.gltr-ous.us` 접속 가능?
-- [ ] `https://schedule.gltr-ous.us/privacy` 접속 가능?
-- [ ] `https://schedule.gltr-ous.us/terms` 접속 가능?
+- [ ] `https://hyun-schedule.moondo.ai` 접속 가능?
+- [ ] `https://hyun-schedule.moondo.ai/privacy` 접속 가능?
+- [ ] `https://hyun-schedule.moondo.ai/terms` 접속 가능?
 - [ ] 도메인 소유권 확인 완료?
 - [ ] OAuth 동의 화면 모든 필드 입력?
 

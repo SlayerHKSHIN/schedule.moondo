@@ -2,17 +2,36 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import Calendar from 'react-calendar';
 import axios from 'axios';
+import ChatBot from '../components/ChatBot';
 import { toast } from 'react-toastify';
 import { theme } from '../styles/theme';
-import AuthButton from '../components/AuthButton';
 import 'react-calendar/dist/Calendar.css';
+
+// Configure axios baseURL based on environment
+const getBaseURL = () => {
+  // If running on localhost, use local backend
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://localhost:4312';
+  }
+  // For production (HTTPS), use relative path to avoid mixed content
+  return '';
+};
+
+const api = axios.create({
+  baseURL: getBaseURL(),
+  withCredentials: true
+});
 
 const Container = styled.div`
   min-height: 100vh;
   background: linear-gradient(135deg, ${props => props.theme.colors.background.default} 0%, ${props => props.theme.colors.beige.light} 100%);
   padding: ${props => props.theme.spacing.md};
   font-family: ${props => props.theme.typography.fontFamily};
-  
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  width: 100%;
+
   @media (min-width: ${props => props.theme.breakpoints.tablet}) {
     padding: ${props => props.theme.spacing.xl};
   }
@@ -63,13 +82,10 @@ const Subtitle = styled.p`
 const MainContent = styled.main`
   max-width: 1200px;
   margin: 0 auto;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: ${props => props.theme.spacing.xl};
-  
-  @media (min-width: ${props => props.theme.breakpoints.desktop}) {
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
-  }
+  padding-bottom: ${props => props.theme.spacing.xxl};
 `;
 
 const Card = styled.div`
@@ -372,9 +388,11 @@ function HomePage() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [availableSlots, setAvailableSlots] = useState([]);
   const [selectedSlot, setSelectedSlot] = useState(null);
+  const [selectedSlots, setSelectedSlots] = useState([]); // 다중 슬롯 선택
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    additionalEmails: '',
     purpose: '',
     meetingType: 'video'
   });
@@ -386,14 +404,13 @@ function HomePage() {
   const [hostName, setHostName] = useState('Hyun'); // 호스트 이름 상태 추가
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
+  // ChatBot is always visible, no toggle needed
 
   // Check authentication status
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const response = await axios.get('/api/auth/user', {
-          withCredentials: true
-        });
+        const response = await api.get('/api/auth/user');
         if (response.data.authenticated) {
           setIsAuthenticated(true);
           setUser(response.data.user);
@@ -417,14 +434,10 @@ function HomePage() {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       setUserTimezone(timezone);
       
-      // Use user-specific endpoint if authenticated, otherwise use default
-      const endpoint = isAuthenticated 
-        ? `/api/user/calendar/available-slots?date=${formattedDate}&timezone=${encodeURIComponent(timezone)}`
-        : `/api/calendar/available-slots?date=${formattedDate}&timezone=${encodeURIComponent(timezone)}`;
+      // Use same endpoint for all users
+      const endpoint = `/api/calendar/available-slots?date=${formattedDate}&timezone=${encodeURIComponent(timezone)}`;
       
-      const response = await axios.get(endpoint, {
-        withCredentials: true
-      });
+      const response = await api.get(endpoint);
       
       // Extract time strings from slot objects
       const slots = response.data.slots || [];
@@ -441,6 +454,7 @@ function HomePage() {
       
       setAvailableSlots(timeSlots);
       setSelectedSlot(null);
+      setSelectedSlots([]);
       setLocationInfo(response.data.location);
       
       // 호스트 이름 설정
@@ -460,10 +474,41 @@ function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, isAuthenticated]);
 
+  const handleSlotClick = (slot) => {
+    const slotIndex = availableSlots.indexOf(slot);
+    
+    if (selectedSlots.length === 0) {
+      setSelectedSlots([slot]);
+      setSelectedSlot(slot);
+    } else if (selectedSlots.length === 1) {
+      const prevIndex = availableSlots.indexOf(selectedSlots[0]);
+      
+      if (slotIndex === prevIndex + 1) {
+        setSelectedSlots([selectedSlots[0], slot]);
+        setSelectedSlot(selectedSlots[0]);
+      } else if (slotIndex === prevIndex - 1) {
+        setSelectedSlots([slot, selectedSlots[0]]);
+        setSelectedSlot(slot);
+      } else {
+        setSelectedSlots([slot]);
+        setSelectedSlot(slot);
+      }
+    } else {
+      if (selectedSlots.includes(slot)) {
+        const newSlots = selectedSlots.filter(s => s !== slot);
+        setSelectedSlots(newSlots);
+        setSelectedSlot(newSlots[0] || null);
+      } else {
+        setSelectedSlots([slot]);
+        setSelectedSlot(slot);
+      }
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!selectedSlot) {
+    if (!selectedSlot && selectedSlots.length === 0) {
       toast.error('Please select a time slot');
       return;
     }
@@ -472,29 +517,30 @@ function HomePage() {
       setLoading(true);
       const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       
-      // Use user-specific endpoint if authenticated
-      const endpoint = isAuthenticated ? '/api/user/calendar/book' : '/api/booking/create';
-      const payload = isAuthenticated 
-        ? {
-            guestName: formData.name,
-            guestEmail: formData.email,
-            date: selectedDate.toISOString().split('T')[0],
-            time: selectedSlot,
-            purpose: formData.purpose,
-            meetingType: formData.meetingType,
-            timezone: userTimezone
-          }
-        : {
-            ...formData,
-            date: selectedDate.toISOString().split('T')[0],
-            time: selectedSlot,
-            timezone: userTimezone
-          };
+      // Format date in local timezone instead of UTC
+      const year = selectedDate.getFullYear();
+      const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const day = String(selectedDate.getDate()).padStart(2, '0');
+      const localDateString = `${year}-${month}-${day}`;
       
-      const response = await axios.post(endpoint, payload, {
-        withCredentials: true
-      });
+      // Use same endpoint for all users
+      const endpoint = '/api/booking/create';
+      const payload = {
+        name: formData.name,
+        email: formData.email,
+        additionalEmails: formData.additionalEmails,
+        date: localDateString,
+        time: selectedSlots.length > 0 ? selectedSlots[0] : selectedSlot,
+        endTime: selectedSlots.length === 2 ? selectedSlots[1] : null,
+        purpose: formData.purpose,
+        meetingType: formData.meetingType,
+        timezone: userTimezone
+      };
+      
+      const response = await api.post(endpoint, payload);
 
+      console.log('Booking response:', response.data);
+      console.log('Calendar link:', response.data.calendarLink);
       setBookingDetails(response.data);
       setShowSuccessModal(true);
       
@@ -502,13 +548,17 @@ function HomePage() {
       setFormData({
         name: '',
         email: '',
+        additionalEmails: '',
         purpose: '',
         meetingType: 'video'
       });
       setSelectedSlot(null);
+      setSelectedSlots([]);
       
-      // Refresh available slots
-      fetchAvailableSlots(selectedDate);
+      // Refresh available slots with a small delay to ensure server has updated
+      setTimeout(() => {
+        fetchAvailableSlots(selectedDate);
+      }, 1000);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Booking failed');
     } finally {
@@ -518,23 +568,31 @@ function HomePage() {
 
   return (
     <Container>
-      <AuthButton />
       <Header>
         <Title>Schedule a Meeting with {hostName}</Title>
         <Subtitle>Choose a convenient time for our conversation</Subtitle>
       </Header>
 
       <MainContent>
-        <Card $delay="0.1s">
-          <SectionTitle>Select Date</SectionTitle>
-          <CalendarWrapper>
-            <Calendar
-              onChange={setSelectedDate}
-              value={selectedDate}
-              minDate={new Date()}
-              locale="en-US"
-            />
-          </CalendarWrapper>
+        {/* AI Scheduling Assistant - Full Width Top */}
+        {/* TODO: Uncomment when ChatBot development is complete */}
+        {/* <Card $delay="0.05s" style={{ marginBottom: '2rem' }}>
+          <ChatBot />
+        </Card> */}
+
+        {/* Two Column Layout - Calendar and Your Information */}
+        <div className="two-column-layout">
+          {/* Left Column - Calendar */}
+          <Card $delay="0.1s">
+            <SectionTitle>Select Date</SectionTitle>
+            <CalendarWrapper>
+              <Calendar
+                onChange={setSelectedDate}
+                value={selectedDate}
+                minDate={new Date()}
+                locale="en-US"
+              />
+            </CalendarWrapper>
 
           {loading ? (
             <div style={{ textAlign: 'center', padding: '2rem' }}>
@@ -556,6 +614,16 @@ function HomePage() {
                 <div style={{ fontSize: '0.85rem', color: theme.colors.text.secondary }}>
                   📍 Your timezone: <strong>{userTimezone}</strong>
                 </div>
+                <div style={{ 
+                  fontSize: '0.85rem', 
+                  color: theme.colors.text.secondary,
+                  background: theme.colors.pastel.peach + '30',
+                  padding: '0.5rem',
+                  borderRadius: theme.borderRadius.sm,
+                  fontWeight: '500'
+                }}>
+                  💡 Select two consecutive slots for a 1-hour meeting
+                </div>
                 {locationInfo && locationInfo.locationData && (locationInfo.locationData.morning || locationInfo.locationData.afternoon) && (
                   <div style={{ fontSize: '0.85rem', color: theme.colors.text.secondary }}>
                     📌 {hostName}'s location for this date:
@@ -576,8 +644,8 @@ function HomePage() {
                 {availableSlots.map((slot) => (
                   <TimeSlot
                     key={slot}
-                    selected={selectedSlot === slot}
-                    onClick={() => setSelectedSlot(slot)}
+                    selected={selectedSlots.includes(slot)}
+                    onClick={() => handleSlotClick(slot)}
                     type="button"
                   >
                     {slot}
@@ -590,10 +658,11 @@ function HomePage() {
               No available slots for this date
             </p>
           )}
-        </Card>
+          </Card>
 
-        <Card $delay="0.2s">
-          <SectionTitle>Your Information</SectionTitle>
+          {/* Right Column - Your Information */}
+          <Card $delay="0.2s">
+            <SectionTitle>Your Information</SectionTitle>
           <Form onSubmit={handleSubmit}>
             <FormGroup>
               <Label htmlFor="name">Name *</Label>
@@ -617,6 +686,20 @@ function HomePage() {
                 required
                 placeholder="your@email.com"
               />
+            </FormGroup>
+
+            <FormGroup>
+              <Label htmlFor="additionalEmails">Additional Guests (Optional)</Label>
+              <Input
+                id="additionalEmails"
+                type="text"
+                value={formData.additionalEmails}
+                onChange={(e) => setFormData({ ...formData, additionalEmails: e.target.value })}
+                placeholder="guest1@email.com, guest2@email.com"
+              />
+              <div style={{ fontSize: '0.75rem', color: theme.colors.text.secondary, marginTop: '0.25rem' }}>
+                Separate multiple emails with commas. They will receive calendar invitations.
+              </div>
             </FormGroup>
 
             <FormGroup>
@@ -658,7 +741,8 @@ function HomePage() {
               {loading ? <LoadingSpinner /> : 'Book Meeting'}
             </SubmitButton>
           </Form>
-        </Card>
+          </Card>
+        </div>
       </MainContent>
 
       {showSuccessModal && (
@@ -669,6 +753,47 @@ function HomePage() {
             <p style={{ margin: '1rem 0', color: theme.colors.text.secondary }}>
               A confirmation email has been sent to {bookingDetails?.email}
             </p>
+            {bookingDetails?.calendarLink && (
+              <div style={{ 
+                margin: '1.5rem 0',
+                padding: '1rem',
+                background: theme.colors.background.card,
+                borderRadius: theme.borderRadius.md,
+                border: `1px solid ${theme.colors.border.light}`
+              }}>
+                <p style={{ fontSize: '0.9rem', marginBottom: '0.5rem', color: theme.colors.text.primary }}>
+                  📅 Google Calendar Event Link:
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <Input
+                    type="text"
+                    value={bookingDetails.calendarLink}
+                    readOnly
+                    style={{ flex: 1, fontSize: '0.85rem' }}
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(bookingDetails.calendarLink);
+                      toast.success('Calendar link copied!');
+                    }}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: theme.colors.pastel.lavender,
+                      border: 'none',
+                      borderRadius: theme.borderRadius.sm,
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                      fontWeight: '500',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => e.target.style.background = theme.colors.pastel.sage}
+                    onMouseOut={(e) => e.target.style.background = theme.colors.pastel.lavender}
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+            )}
             <SubmitButton onClick={() => setShowSuccessModal(false)}>
               Close
             </SubmitButton>
@@ -679,7 +804,9 @@ function HomePage() {
       <Footer>
         <a href="/privacy">Privacy Policy</a>
         <a href="/terms">Terms of Service</a>
+        <a href="/admin" style={{ fontWeight: 'bold' }}>Admin</a>
       </Footer>
+
     </Container>
   );
 }

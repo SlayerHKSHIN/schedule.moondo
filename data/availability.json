@@ -1,0 +1,38 @@
+{
+  "Monday": {
+    "enabled": true,
+    "start": "08:00",
+    "end": "21:00"
+  },
+  "Tuesday": {
+    "enabled": true,
+    "start": "08:00",
+    "end": "21:00"
+  },
+  "Wednesday": {
+    "enabled": true,
+    "start": "08:00",
+    "end": "21:00"
+  },
+  "Thursday": {
+    "enabled": true,
+    "start": "08:00",
+    "end": "21:00"
+  },
+  "Friday": {
+    "enabled": true,
+    "start": "08:00",
+    "end": "21:00"
+  },
+  "Saturday": {
+    "enabled": true,
+    "start": "08:00",
+    "end": "21:00"
+  },
+  "Sunday": {
+    "enabled": true,
+    "start": "08:00",
+    "end": "21:00"
+  },
+  "timezone": "America/Los_Angeles"
+}
