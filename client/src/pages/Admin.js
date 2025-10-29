@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 import { theme } from '../styles/theme';
+import { timezoneOptions } from '../utils/timezones';
 
 const Container = styled.div`
   min-height: 100vh;
@@ -74,6 +75,115 @@ const Card = styled.div`
   animation-fill-mode: both;
 `;
 
+const TokenWarningBanner = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(135deg, #ff6b6b, #ff8787);
+  color: white;
+  padding: ${props => props.theme.spacing.lg};
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: ${props => props.theme.shadows.lg};
+  z-index: 9999;
+  animation: slideDown 0.5s ease-out;
+  flex-wrap: wrap;
+  gap: ${props => props.theme.spacing.md};
+
+  @keyframes slideDown {
+    from {
+      transform: translateY(-100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+`;
+
+const TokenWarningContent = styled.div`
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: ${props => props.theme.spacing.md};
+  min-width: 250px;
+`;
+
+const WarningIcon = styled.div`
+  font-size: 2rem;
+  animation: pulse 2s ease-in-out infinite;
+
+  @keyframes pulse {
+    0%, 100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.1);
+    }
+  }
+`;
+
+const ReauthButton = styled.button`
+  padding: ${props => props.theme.spacing.sm} ${props => props.theme.spacing.lg};
+  background: white;
+  color: #ff6b6b;
+  border-radius: ${props => props.theme.borderRadius.md};
+  font-weight: 600;
+  transition: all ${props => props.theme.transitions.fast};
+  white-space: nowrap;
+
+  &:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  }
+`;
+
+const TokenStatusContent = styled.div`
+  display: flex;
+  align-items: center;
+  gap: ${props => props.theme.spacing.lg};
+  flex-wrap: wrap;
+`;
+
+const TokenIcon = styled.div`
+  font-size: 3rem;
+  animation: ${props => props.$checking ? 'spin 1s linear infinite' : 'none'};
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+`;
+
+const TokenInfo = styled.div`
+  flex: 1;
+  min-width: 200px;
+`;
+
+const TokenTitle = styled.h3`
+  margin: 0;
+  font-size: 1.2rem;
+  color: ${props => props.theme.colors.text.primary};
+`;
+
+const TokenMessage = styled.p`
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: ${props => props.theme.colors.text.secondary};
+`;
+
+const TokenTimestamp = styled.p`
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: ${props => props.theme.colors.text.disabled};
+`;
+
 const SectionTitle = styled.h2`
   font-size: 1.5rem;
   color: ${props => props.theme.colors.text.primary};
@@ -81,7 +191,7 @@ const SectionTitle = styled.h2`
   display: flex;
   align-items: center;
   gap: ${props => props.theme.spacing.sm};
-  
+
   &::before {
     content: '';
     width: 4px;
@@ -342,18 +452,37 @@ function formatTimeDisplay(time) {
 }
 
 function Admin() {
+  // Generate time options for dropdown
+  const generateTimeOptions = () => {
+    const times = [];
+    for (let hour = 0; hour < 24; hour++) {
+      for (let minute of [0, 30]) {
+        const h = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+        const period = hour < 12 ? 'AM' : 'PM';
+        const timeStr = `${h}:${minute === 0 ? '00' : '30'} ${period}`;
+        const value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        times.push({ label: timeStr, value });
+      }
+    }
+    return times;
+  };
+
+  const timeOptions = generateTimeOptions();
+
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [bookings, setBookings] = useState([]);
   const [availability, setAvailability] = useState({
-    Monday: { enabled: true, start: '09:00', end: '17:00' },
-    Tuesday: { enabled: true, start: '09:00', end: '17:00' },
-    Wednesday: { enabled: true, start: '09:00', end: '17:00' },
-    Thursday: { enabled: true, start: '09:00', end: '17:00' },
-    Friday: { enabled: true, start: '09:00', end: '17:00' },
-    Saturday: { enabled: true, start: '09:00', end: '17:00' },
-    Sunday: { enabled: true, start: '09:00', end: '17:00' }
+    timezone: 'Asia/Seoul', // Default timezone for availability
+    Monday: { enabled: true, start: '08:00', end: '21:00' },
+    Tuesday: { enabled: true, start: '08:00', end: '21:00' },
+    Wednesday: { enabled: true, start: '08:00', end: '21:00' },
+    Thursday: { enabled: true, start: '08:00', end: '21:00' },
+    Friday: { enabled: true, start: '08:00', end: '21:00' },
+    Saturday: { enabled: true, start: '08:00', end: '21:00' },
+    Sunday: { enabled: true, start: '08:00', end: '21:00' }
   });
+  const [currentTimezone, setCurrentTimezone] = useState('Asia/Seoul');
   const [loading, setLoading] = useState(false);
   const [locations, setLocations] = useState([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
@@ -366,13 +495,41 @@ function Admin() {
   });
   const [editingLocation, setEditingLocation] = useState(null);
 
+  // Token status monitoring
+  const [tokenStatus, setTokenStatus] = useState({
+    status: 'checking', // 'checking' | 'valid' | 'expired' | 'invalid' | 'error'
+    message: '',
+    lastChecked: null
+  });
+  const [showTokenWarning, setShowTokenWarning] = useState(false);
+  const [reauthUrl, setReauthUrl] = useState('');
+
   useEffect(() => {
     if (isAuthenticated) {
       fetchBookings();
       fetchAvailability();
       fetchLocations();
+      detectCurrentTimezone();
     }
   }, [isAuthenticated]);
+
+  const detectCurrentTimezone = () => {
+    // Get today's date
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Check if there's a location set for today
+    const todayLocation = locations.find(loc => loc.date === today);
+    if (todayLocation && todayLocation.timezone) {
+      setCurrentTimezone(todayLocation.timezone);
+    } else {
+      // Default to KST if no location is set
+      setCurrentTimezone('Asia/Seoul');
+    }
+  };
+
+  useEffect(() => {
+    detectCurrentTimezone();
+  }, [locations]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -388,7 +545,7 @@ function Admin() {
     } catch (error) {
       console.error('Login error:', error.response?.data || error.message);
       if (error.response?.status === 401) {
-        toast.error('Invalid password. Default password is: admin123');
+        toast.error('Invalid password');
       } else {
         toast.error('Login failed. Please try again.');
       }
@@ -402,6 +559,58 @@ function Admin() {
     localStorage.removeItem('adminAuth');
     toast.info('Logged out successfully');
   };
+
+  const checkTokenStatus = async () => {
+    try {
+      const response = await axios.get('/api/admin/token-status');
+      setTokenStatus({
+        ...response.data,
+        lastChecked: new Date().toISOString()
+      });
+
+      if (response.data.status === 'expired') {
+        setShowTokenWarning(true);
+
+        // Get re-auth URL
+        try {
+          const reauthResponse = await axios.get('/api/admin/reauth-url');
+          setReauthUrl(reauthResponse.data.authUrl);
+        } catch (urlError) {
+          console.error('Failed to get reauth URL:', urlError);
+        }
+
+        toast.error('Google Calendar authentication has expired. Please re-authenticate.', {
+          autoClose: false,
+          closeOnClick: false
+        });
+      } else if (response.data.status === 'invalid') {
+        toast.warning('Token configuration issue detected.', {
+          autoClose: 5000
+        });
+      } else if (response.data.status === 'valid') {
+        setShowTokenWarning(false);
+      }
+    } catch (error) {
+      console.error('Failed to check token status:', error);
+      setTokenStatus({
+        status: 'error',
+        message: 'Failed to check token status',
+        lastChecked: new Date().toISOString()
+      });
+    }
+  };
+
+  // Check token status periodically
+  useEffect(() => {
+    if (isAuthenticated) {
+      checkTokenStatus(); // Initial check
+
+      // Check every 5 minutes
+      const interval = setInterval(checkTokenStatus, 5 * 60 * 1000);
+
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
 
   const fetchBookings = async () => {
     try {
@@ -583,45 +792,332 @@ function Admin() {
 
   return (
     <Container>
+      {showTokenWarning && (
+        <TokenWarningBanner>
+          <TokenWarningContent>
+            <WarningIcon>⚠️</WarningIcon>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.2rem' }}>
+                Google Calendar Authentication Expired
+              </h3>
+              <p style={{ margin: '0.25rem 0 0', fontSize: '0.9rem', opacity: 0.9 }}>
+                Your Google Calendar connection has expired. Please re-authenticate to continue using calendar features.
+              </p>
+            </div>
+          </TokenWarningContent>
+          <ReauthButton onClick={() => window.open(reauthUrl, '_blank')}>
+            Re-authenticate Now
+          </ReauthButton>
+        </TokenWarningBanner>
+      )}
+
       <AdminPanel>
         <Header>
           <Title>Admin Dashboard</Title>
           <LogoutButton onClick={handleLogout}>Logout</LogoutButton>
         </Header>
 
+        <Card $delay="0.05s" style={{
+          background: tokenStatus.status === 'valid'
+            ? theme.colors.pastel.sage
+            : tokenStatus.status === 'expired'
+            ? theme.colors.pastel.rose
+            : theme.colors.background.paper,
+          border: `2px solid ${
+            tokenStatus.status === 'valid' ? '#4caf50' :
+            tokenStatus.status === 'expired' ? '#ff6b6b' :
+            theme.colors.border.light
+          }`
+        }}>
+          <SectionTitle>Google Calendar Connection Status</SectionTitle>
+
+          <TokenStatusContent>
+            <TokenIcon $checking={tokenStatus.status === 'checking'}>
+              {tokenStatus.status === 'checking' && '🔄'}
+              {tokenStatus.status === 'valid' && '✅'}
+              {tokenStatus.status === 'expired' && '❌'}
+              {tokenStatus.status === 'invalid' && '⚠️'}
+              {tokenStatus.status === 'error' && '🔴'}
+            </TokenIcon>
+
+            <TokenInfo>
+              <TokenTitle>
+                {tokenStatus.status === 'checking' && 'Checking...'}
+                {tokenStatus.status === 'valid' && 'Connected'}
+                {tokenStatus.status === 'expired' && 'Authentication Expired'}
+                {tokenStatus.status === 'invalid' && 'Configuration Issue'}
+                {tokenStatus.status === 'error' && 'Error'}
+              </TokenTitle>
+              <TokenMessage>{tokenStatus.message}</TokenMessage>
+              {tokenStatus.lastChecked && (
+                <TokenTimestamp>
+                  Last checked: {new Date(tokenStatus.lastChecked).toLocaleString()}
+                </TokenTimestamp>
+              )}
+            </TokenInfo>
+
+            {tokenStatus.status === 'expired' && (
+              <Button onClick={() => window.open(reauthUrl, '_blank')}>
+                Re-authenticate
+              </Button>
+            )}
+
+            {tokenStatus.status === 'valid' && (
+              <Button
+                onClick={checkTokenStatus}
+                style={{ background: theme.colors.pastel.lavender }}
+              >
+                Check Again
+              </Button>
+            )}
+          </TokenStatusContent>
+        </Card>
+
         <Card $delay="0.1s">
           <SectionTitle>Upcoming Bookings</SectionTitle>
           <p style={{ color: theme.colors.text.secondary, fontSize: '0.95rem', marginBottom: '1rem' }}>
-            📅 Meeting bookings will appear here once users schedule meetings through the main page.
+            📅 Your next 3 upcoming meetings from Google Calendar
           </p>
           {bookings.length > 0 ? (
             <BookingsList>
-              {bookings.map((booking) => (
-                <BookingCard key={booking.id}>
-                  <BookingHeader>
-                    <BookingTitle>{booking.name}</BookingTitle>
-                    <BookingDate>{booking.date} at {booking.time}</BookingDate>
-                  </BookingHeader>
-                  <BookingDetail>Email: {booking.email}</BookingDetail>
-                  <BookingDetail>Type: {booking.meetingType}</BookingDetail>
-                  <BookingDetail>Purpose: {booking.purpose}</BookingDetail>
-                  <CancelButton onClick={() => handleCancelBooking(booking.id)}>
-                    Cancel Booking
-                  </CancelButton>
-                </BookingCard>
-              ))}
+              {bookings.map((booking) => {
+                const startDate = new Date(booking.start);
+                const endDate = new Date(booking.end);
+                const dateStr = startDate.toLocaleDateString('en-US', { 
+                  weekday: 'short', 
+                  month: 'short', 
+                  day: 'numeric' 
+                });
+                const startTime = startDate.toLocaleTimeString('en-US', { 
+                  hour: 'numeric', 
+                  minute: '2-digit',
+                  hour12: true 
+                });
+                const endTime = endDate.toLocaleTimeString('en-US', { 
+                  hour: 'numeric', 
+                  minute: '2-digit',
+                  hour12: true 
+                });
+                
+                return (
+                  <BookingCard key={booking.id} style={{ background: theme.colors.background.card }}>
+                    <BookingHeader>
+                      <BookingTitle style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                        {booking.summary}
+                      </BookingTitle>
+                      <BookingDate style={{ color: theme.colors.primary }}>
+                        {dateStr}
+                      </BookingDate>
+                    </BookingHeader>
+                    <BookingDetail style={{ marginTop: '10px', fontSize: '0.95rem' }}>
+                      🕰️ {startTime} - {endTime}
+                    </BookingDetail>
+                    {booking.attendees && (
+                      <BookingDetail style={{ fontSize: '0.9rem' }}>
+                        👥 {booking.attendees}
+                      </BookingDetail>
+                    )}
+                    {booking.location && (
+                      <BookingDetail style={{ fontSize: '0.9rem' }}>
+                        📍 {booking.location}
+                      </BookingDetail>
+                    )}
+                    {booking.meetLink && (
+                      <BookingDetail style={{ fontSize: '0.9rem' }}>
+                        <a href={booking.meetLink} target="_blank" rel="noopener noreferrer" 
+                           style={{ color: theme.colors.primary, textDecoration: 'none' }}>
+                          🎥 Join Google Meet
+                        </a>
+                      </BookingDetail>
+                    )}
+                  </BookingCard>
+                );
+              })}
             </BookingsList>
           ) : (
             <p style={{ color: theme.colors.text.secondary, textAlign: 'center' }}>
-              No bookings found
+              No upcoming meetings found
             </p>
           )}
         </Card>
 
         <Card $delay="0.2s">
           <SectionTitle>Availability Settings</SectionTitle>
+          
+          {/* Timezone Selector */}
+          <div style={{ 
+            marginBottom: '25px', 
+            padding: '20px', 
+            background: theme.colors.pastel.lavender,
+            borderRadius: theme.borderRadius.md,
+            border: `2px solid ${theme.colors.primary}`
+          }}>
+            <h4 style={{ marginBottom: '15px', color: theme.colors.text.primary }}>
+              🌍 Select Working Hours Timezone
+            </h4>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 'bold' }}>Set timezone for availability:</span>
+              <select
+                value={availability.timezone || 'Asia/Seoul'}
+                onChange={(e) => setAvailability(prev => ({ ...prev, timezone: e.target.value }))}
+                style={{
+                  padding: '10px',
+                  borderRadius: '6px',
+                  border: '2px solid #ddd',
+                  fontSize: '15px',
+                  background: 'white',
+                  cursor: 'pointer',
+                  minWidth: '250px',
+                  fontWeight: '500'
+                }}
+              >
+                <optgroup label="Asia">
+                  <option value="Asia/Seoul">🇰🇷 Korea (Seoul) - KST</option>
+                  <option value="Asia/Tokyo">🇯🇵 Japan (Tokyo) - JST</option>
+                  <option value="Asia/Shanghai">🇨🇳 China (Shanghai) - CST</option>
+                  <option value="Asia/Singapore">🇸🇬 Singapore - SGT</option>
+                  <option value="Asia/Dubai">🇦🇪 Dubai - GST</option>
+                </optgroup>
+                <optgroup label="Americas">
+                  <option value="America/Los_Angeles">🇺🇸 Los Angeles - PST/PDT</option>
+                  <option value="America/New_York">🇺🇸 New York - EST/EDT</option>
+                  <option value="America/Chicago">🇺🇸 Chicago - CST/CDT</option>
+                  <option value="America/Denver">🇺🇸 Denver - MST/MDT</option>
+                  <option value="America/Toronto">🇨🇦 Toronto - EST/EDT</option>
+                  <option value="America/Mexico_City">🇲🇽 Mexico City - CST</option>
+                </optgroup>
+                <optgroup label="Europe">
+                  <option value="Europe/London">🇬🇧 London - GMT/BST</option>
+                  <option value="Europe/Paris">🇫🇷 Paris - CET/CEST</option>
+                  <option value="Europe/Berlin">🇩🇪 Berlin - CET/CEST</option>
+                  <option value="Europe/Moscow">🇷🇺 Moscow - MSK</option>
+                </optgroup>
+                <optgroup label="Oceania">
+                  <option value="Australia/Sydney">🇦🇺 Sydney - AEST/AEDT</option>
+                  <option value="Pacific/Auckland">🇳🇿 Auckland - NZST/NZDT</option>
+                </optgroup>
+              </select>
+            </div>
+            <div style={{ 
+              fontSize: '0.9rem', 
+              color: theme.colors.text.secondary, 
+              marginTop: '10px',
+              fontStyle: 'italic'
+            }}>
+              ℹ️ All working hours below will be interpreted in this timezone
+            </div>
+          </div>
+          
+          {/* Apply to All Days Section */}
+          <div style={{ 
+            marginBottom: '30px', 
+            padding: '20px', 
+            background: theme.colors.pastel.mint,
+            borderRadius: theme.borderRadius.md,
+            border: `2px solid ${theme.colors.primary}`
+          }}>
+            <h4 style={{ marginBottom: '15px', color: theme.colors.text.primary }}>
+              🔄 Apply to All Days
+            </h4>
+            <p style={{ 
+              fontSize: '0.85rem', 
+              color: theme.colors.text.secondary, 
+              marginBottom: '15px',
+              fontStyle: 'italic'
+            }}>
+              Note: These times will be interpreted based on your location's timezone for each specific date
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 'bold' }}>Set all days:</span>
+              <select
+                id="bulk-start-time"
+                defaultValue="08:00"
+                style={{
+                  padding: '8px',
+                  borderRadius: '4px',
+                  border: '1px solid #ddd',
+                  fontSize: '14px',
+                  background: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                {timeOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span>to</span>
+              <select
+                id="bulk-end-time"
+                defaultValue="21:00"
+                style={{
+                  padding: '8px',
+                  borderRadius: '4px',
+                  border: '1px solid #ddd',
+                  fontSize: '14px',
+                  background: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                {timeOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <Button
+                onClick={() => {
+                  const startTime = document.getElementById('bulk-start-time').value || '08:00';
+                  const endTime = document.getElementById('bulk-end-time').value || '21:00';
+                  const newAvailability = { ...availability };
+                  Object.keys(availability).forEach(day => {
+                    if (day !== 'timezone') {
+                      newAvailability[day] = {
+                        ...availability[day],
+                        start: startTime,
+                        end: endTime
+                      };
+                    }
+                  });
+                  setAvailability(newAvailability);
+                  toast.success('Applied to all days!');
+                }}
+                style={{
+                  padding: '8px 20px',
+                  background: theme.colors.primary,
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: theme.borderRadius.sm,
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Apply to All
+              </Button>
+            </div>
+          </div>
+
           <AvailabilityGrid>
-            {Object.entries(availability).map(([day, settings]) => (
+            {Object.entries(availability).filter(([key]) => key !== 'timezone').map(([day, settings]) => {
+              // Find if there's a specific timezone for upcoming dates with this day
+              const upcomingDates = [];
+              const today = new Date();
+              for (let i = 0; i < 14; i++) { // Check next 2 weeks
+                const date = new Date(today);
+                date.setDate(today.getDate() + i);
+                const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+                if (dayName === day) {
+                  const dateStr = date.toISOString().split('T')[0];
+                  const locationForDate = locations.find(loc => loc.date === dateStr);
+                  if (locationForDate && locationForDate.timezone) {
+                    upcomingDates.push({ date: dateStr, timezone: locationForDate.timezone });
+                  }
+                }
+              }
+              
+              return (
               <DayCard key={day}>
                 <DayName>
                   <Checkbox
@@ -630,30 +1126,82 @@ function Admin() {
                     onChange={(e) => handleAvailabilityChange(day, 'enabled', e.target.checked)}
                   />
                   {day}
+                  {upcomingDates.length > 0 && (
+                    <span style={{ 
+                      fontSize: '0.75rem', 
+                      marginLeft: '8px',
+                      padding: '2px 6px',
+                      background: theme.colors.pastel.peach,
+                      borderRadius: theme.borderRadius.sm,
+                      color: theme.colors.text.secondary
+                    }}>
+                      {upcomingDates[0].timezone === 'Asia/Seoul' ? 'KST' : 
+                       upcomingDates[0].timezone === 'America/Los_Angeles' ? 'PDT' :
+                       upcomingDates[0].timezone === 'America/New_York' ? 'EDT' :
+                       upcomingDates[0].timezone === 'Europe/London' ? 'BST' :
+                       upcomingDates[0].timezone === 'Asia/Tokyo' ? 'JST' : 'TZ'}
+                    </span>
+                  )}
                 </DayName>
                 {settings.enabled && (
                   <TimeSlotInput>
-                    <div className="time-inputs">
+                    {upcomingDates.length > 0 && (
+                      <div style={{ 
+                        fontSize: '0.75rem', 
+                        color: theme.colors.text.secondary,
+                        marginBottom: '8px',
+                        padding: '4px',
+                        background: theme.colors.background.hover,
+                        borderRadius: theme.borderRadius.sm
+                      }}>
+                        📅 {new Date(upcomingDates[0].date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </div>
+                    )}
+                    <div className="time-inputs" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span>🕐</span>
-                      <input
-                        type="time"
+                      <select
                         value={settings.start}
                         onChange={(e) => handleAvailabilityChange(day, 'start', e.target.value)}
-                      />
+                        style={{
+                          padding: '8px',
+                          borderRadius: '4px',
+                          border: '1px solid #ddd',
+                          fontSize: '14px',
+                          background: 'white',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {timeOptions.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                       <span>→</span>
-                      <input
-                        type="time"
+                      <select
                         value={settings.end}
                         onChange={(e) => handleAvailabilityChange(day, 'end', e.target.value)}
-                      />
-                    </div>
-                    <div className="time-display">
-                      {formatTimeDisplay(settings.start)} - {formatTimeDisplay(settings.end)}
+                        style={{
+                          padding: '8px',
+                          borderRadius: '4px',
+                          border: '1px solid #ddd',
+                          fontSize: '14px',
+                          background: 'white',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {timeOptions.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </TimeSlotInput>
                 )}
               </DayCard>
-            ))}
+            );
+            })}
           </AvailabilityGrid>
           <Button onClick={saveAvailability} disabled={loading} style={{ marginTop: '1.5rem' }}>
             {loading ? <LoadingSpinner /> : 'Save Availability'}
@@ -696,11 +1244,32 @@ function Admin() {
                 value={locationData.timezone}
                 onChange={(e) => setLocationData({ ...locationData, timezone: e.target.value })}
               >
-                <option value="Asia/Seoul">Seoul (KST)</option>
-                <option value="America/Los_Angeles">Los Angeles (PST/PDT)</option>
-                <option value="America/New_York">New York (EST/EDT)</option>
-                <option value="Europe/London">London (GMT/BST)</option>
-                <option value="Asia/Tokyo">Tokyo (JST)</option>
+                <optgroup label="Asia-Pacific">
+                  {timezoneOptions.Asia.map(tz => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label} ({tz.abbr})
+                    </option>
+                  ))}
+                  {timezoneOptions.Oceania.map(tz => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label} ({tz.abbr})
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Europe & Africa">
+                  {timezoneOptions.Europe.map(tz => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label} ({tz.abbr})
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Americas">
+                  {timezoneOptions.Americas.map(tz => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label} ({tz.abbr})
+                    </option>
+                  ))}
+                </optgroup>
               </Select>
             </FormGroup>
 
@@ -747,11 +1316,20 @@ function Admin() {
               <LoadingSpinner />
               <p style={{ marginTop: '1rem', color: theme.colors.text.secondary }}>Loading locations...</p>
             </div>
-          ) : locations.length > 0 && (
-            <div style={{ marginTop: '2rem' }}>
-              <h3 style={{ marginBottom: '1rem', color: theme.colors.text.primary }}>Scheduled Locations</h3>
-              <BookingsList>
-                {locations.map((loc, index) => (
+          ) : locations.length > 0 && (() => {
+            const futureLocations = locations.filter(loc => {
+              // Only show future dates (including today)
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const locDate = new Date(loc.date + 'T00:00:00');
+              return locDate >= today;
+            });
+            
+            return futureLocations.length > 0 ? (
+              <div style={{ marginTop: '2rem' }}>
+                <h3 style={{ marginBottom: '1rem', color: theme.colors.text.primary }}>Scheduled Locations</h3>
+                <BookingsList>
+                  {futureLocations.map((loc, index) => (
                   <BookingCard key={index} style={{ background: theme.colors.background.card }}>
                     <BookingHeader>
                       <BookingTitle>{new Date(loc.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</BookingTitle>
@@ -837,7 +1415,8 @@ function Admin() {
                 ))}
               </BookingsList>
             </div>
-          )}
+          ) : null;
+        })()}
         </Card>
       </AdminPanel>
     </Container>

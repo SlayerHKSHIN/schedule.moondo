@@ -14,14 +14,37 @@ router.get('/available-slots', async (req, res) => {
     const axios = require('axios');
     let morningLocation = null;
     let afternoonLocation = null;
-    let hostTimezone = 'Asia/Seoul'; // 기본값
+    let hostTimezone = null; // 기본값 없음
     
+    // First, get availability settings to get the default timezone
+    try {
+      const port = process.env.PORT || 4312;
+      const availabilityResponse = await axios.get(`http://localhost:${port}/api/admin/availability`);
+      if (availabilityResponse.data && availabilityResponse.data.timezone) {
+        // Set the default timezone from availability settings
+        hostTimezone = availabilityResponse.data.timezone;
+      }
+    } catch (err) {
+      console.log('Could not fetch availability data');
+    }
+    
+    // If no timezone from availability, use default
+    if (!hostTimezone) {
+      hostTimezone = 'Asia/Seoul';
+    }
+    
+    // Then get location information (location-specific timezone overrides availability timezone)
     try {
       const port = process.env.PORT || 4312;
       const locationResponse = await axios.get(`http://localhost:${port}/api/admin/location/${date}`);
       morningLocation = locationResponse.data.morning;
       afternoonLocation = locationResponse.data.afternoon;
-      hostTimezone = locationResponse.data.timezone || 'Asia/Seoul';
+      // Only override if location has a DIFFERENT timezone than the default
+      if (locationResponse.data.timezone && 
+          locationResponse.data.timezone !== 'Asia/Seoul' && 
+          locationResponse.data.timezone !== hostTimezone) {
+        hostTimezone = locationResponse.data.timezone;
+      }
     } catch (err) {
       console.log('Could not fetch location data');
     }

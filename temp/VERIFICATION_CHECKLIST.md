@@ -11,7 +11,7 @@
 2. **속성 추가**
    - "속성 추가" 클릭
    - **도메인** 선택
-   - `gltr-ous.us` 입력
+   - `moondo.ai` 입력
 
 3. **DNS 레코드 추가**
    - Google이 제공하는 TXT 레코드 복사
@@ -50,14 +50,14 @@
 
 4. **앱 도메인 설정**
    ```
-   애플리케이션 홈페이지: https://schedule.gltr-ous.us
-   애플리케이션 개인정보처리방침: https://schedule.gltr-ous.us/privacy
-   애플리케이션 서비스 약관: https://schedule.gltr-ous.us/terms
+   애플리케이션 홈페이지: https://hyun-schedule.moondo.ai
+   애플리케이션 개인정보처리방침: https://hyun-schedule.moondo.ai/privacy
+   애플리케이션 서비스 약관: https://hyun-schedule.moondo.ai/terms
    ```
 
 5. **승인된 도메인 추가**
    ```
-   gltr-ous.us
+   moondo.ai
    ```
 
 6. **개발자 연락처**
@@ -129,7 +129,7 @@
    
    **Link to Privacy Policy:**
    ```
-   https://schedule.gltr-ous.us/privacy
+   https://hyun-schedule.moondo.ai/privacy
    ```
    
    **YouTube Demo Video:** (선택사항이지만 권장)

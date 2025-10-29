@@ -6,3 +6,12 @@ dist/
 build/
 .vscode/
 .idea/
+.refresh_token.json
+/var/log/token-refresh.log
+/var/log/schedule-server.log
+nohup.out
+server.log
+service_account_key/
+token.json
+authUrl.txt
+adminPasswordHash.txt
