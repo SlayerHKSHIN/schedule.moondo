@@ -15,3 +15,5 @@ service_account_key/
 token.json
 authUrl.txt
 adminPasswordHash.txt
+data/users.json
+data/availability.json

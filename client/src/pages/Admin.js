@@ -503,6 +503,8 @@ function Admin() {
   });
   const [showTokenWarning, setShowTokenWarning] = useState(false);
   const [reauthUrl, setReauthUrl] = useState('');
+  const [manualOauthUrl, setManualOauthUrl] = useState('');
+  const [processingOauth, setProcessingOauth] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -597,6 +599,62 @@ function Admin() {
         message: 'Failed to check token status',
         lastChecked: new Date().toISOString()
       });
+    }
+  };
+
+  const handleManualOauthSubmit = async (e) => {
+    e.preventDefault();
+    if (!manualOauthUrl.trim()) {
+      toast.error('Please enter the OAuth callback URL');
+      return;
+    }
+
+    try {
+      setProcessingOauth(true);
+
+      // Extract code from URL if it's a full URL, or use it directly if it's just the code
+      let code = manualOauthUrl.trim();
+      let originalUrl = null;
+
+      // Check if it's a URL
+      if (code.includes('http') || code.includes('callback')) {
+        try {
+          const url = new URL(code);
+          const codeParam = url.searchParams.get('code');
+          if (codeParam) {
+            originalUrl = code; // Save the full original URL
+            code = codeParam;   // Extract just the code
+          } else {
+            toast.error('Could not find authorization code in URL');
+            return;
+          }
+        } catch (urlError) {
+          toast.error('Invalid URL format. Please paste the complete callback URL.');
+          return;
+        }
+      }
+
+      // Send both code and original URL to backend for processing
+      const response = await axios.post('/api/admin/process-oauth-code', {
+        code,
+        originalUrl
+      });
+
+      if (response.data.success) {
+        toast.success('Authentication completed successfully!');
+        setManualOauthUrl('');
+        setShowTokenWarning(false);
+
+        // Refresh token status
+        await checkTokenStatus();
+      } else {
+        toast.error(response.data.error || 'Authentication failed');
+      }
+    } catch (error) {
+      console.error('OAuth processing error:', error);
+      toast.error(error.response?.data?.error || 'Failed to process OAuth code. Please try again.');
+    } finally {
+      setProcessingOauth(false);
     }
   };
 
@@ -871,6 +929,54 @@ function Admin() {
               </Button>
             )}
           </TokenStatusContent>
+
+          {tokenStatus.status === 'expired' && (
+            <div style={{
+              marginTop: '2rem',
+              padding: '1.5rem',
+              background: theme.colors.background.card,
+              borderRadius: theme.borderRadius.md,
+              border: `2px solid ${theme.colors.pastel.lavender}`
+            }}>
+              <h4 style={{
+                margin: '0 0 1rem 0',
+                color: theme.colors.text.primary,
+                fontSize: '1.1rem'
+              }}>
+                🔗 Manual Authentication
+              </h4>
+              <p style={{
+                margin: '0 0 1rem 0',
+                color: theme.colors.text.secondary,
+                fontSize: '0.9rem'
+              }}>
+                After clicking "Re-authenticate" and completing Google's authorization, paste the final callback URL here:
+              </p>
+              <form onSubmit={handleManualOauthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <Input
+                  type="text"
+                  value={manualOauthUrl}
+                  onChange={(e) => setManualOauthUrl(e.target.value)}
+                  placeholder="Paste the callback URL here (e.g., https://hyun-schedule.moondo.ai/api/auth/google/callback?code=...)"
+                  disabled={processingOauth}
+                  style={{
+                    fontSize: '0.85rem',
+                    fontFamily: 'monospace'
+                  }}
+                />
+                <Button
+                  type="submit"
+                  disabled={processingOauth || !manualOauthUrl.trim()}
+                  style={{
+                    background: theme.colors.primary,
+                    alignSelf: 'flex-start'
+                  }}
+                >
+                  {processingOauth ? <LoadingSpinner /> : 'Complete Authentication'}
+                </Button>
+              </form>
+            </div>
+          )}
         </Card>
 
         <Card $delay="0.1s">
