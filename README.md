@@ -46,42 +46,129 @@ Traditional scheduling requires endless conversations:
 
 ## 📦 Installation & Setup
 
-### 1. Install Dependencies
+### 1. Clone the Repository
 ```bash
+git clone https://github.com/SlayerHKSHIN/schedule.gltr-ous.us.git
+cd schedule-gltr-ous
+```
+
+### 2. Install Dependencies
+```bash
+# Install backend dependencies
 npm install
-cd client && npm install
+
+# Install frontend dependencies
+cd client && npm install && cd ..
 ```
 
-### 2. Environment Configuration
-Create a `.env` file:
-```
-GOOGLE_CALENDAR_ID=your-email@gmail.com
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
-PORT=4312
-GOOGLE_REFRESH_TOKEN=your-refresh-token
-```
+### 3. Environment Configuration
 
-### 3. Authentication Setup
-
-#### Hybrid Authentication System
-- **Service Account**: For calendar read operations
-  - Place `service-account-key.json` in `service_account_key/` directory
-  - Share your Google Calendar with the Service Account email
-- **OAuth 2.0**: For creating events with attendee invitations
-  - Set `GOOGLE_REFRESH_TOKEN` environment variable
-  - Ensures full calendar management capabilities
-
-### 4. Run the Application
+#### Backend Environment (.env)
+Copy the example file and configure:
 ```bash
-# Development mode
+cp .env.example .env
+```
+
+Edit `.env` with your credentials:
+```env
+PORT=4312
+NODE_ENV=production
+
+# Google OAuth Credentials (from Google Cloud Console)
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=https://your-domain.com/api/auth/google/callback
+
+# Google Calendar
+GOOGLE_CALENDAR_ID=your-email@gmail.com
+
+# Email Configuration
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-gmail-app-password
+
+# Admin Password
+ADMIN_PASSWORD=your-secure-admin-password
+
+# Encryption Key (generate using the command below)
+ENCRYPTION_KEY=your-64-character-hex-key
+```
+
+**Generate encryption key:**
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+#### Frontend Environment (client/.env)
+```bash
+cd client
+cp .env.example .env
+cd ..
+```
+
+#### Data Files Setup
+Create the data files from examples:
+```bash
+cp data/users.json.example data/users.json
+cp data/availability.json.example data/availability.json
+```
+
+Edit `data/availability.json` to set your default availability schedule and timezone.
+
+### 4. Google Cloud Setup
+
+#### Step 1: Create Google Cloud Project
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a new project
+3. Enable these APIs:
+   - Google Calendar API
+   - Gmail API
+
+#### Step 2: Service Account Setup (for Calendar Reading)
+1. Navigate to "IAM & Admin" > "Service Accounts"
+2. Create a new service account
+3. Download the JSON key file
+4. Save it as `service_account_key/service-account-key.json`
+5. Share your Google Calendar with the service account email (found in the JSON file)
+
+#### Step 3: OAuth 2.0 Setup (for Event Creation)
+1. Go to "APIs & Services" > "Credentials"
+2. Create OAuth 2.0 Client ID (Web application)
+3. Add authorized redirect URIs:
+   - `http://localhost:4312/api/auth/google/callback` (development)
+   - `https://your-domain.com/api/auth/google/callback` (production)
+4. Copy the Client ID and Client Secret to `.env`
+
+### 5. Build Frontend
+```bash
+cd client
+npm run build
+cd ..
+```
+
+### 6. Run the Application
+
+**Development mode:**
+```bash
+# Terminal 1 - Backend
 npm run dev
 
-# Production
+# Terminal 2 - Frontend (optional, if not using build)
+cd client && npm start
+```
+
+**Production mode:**
+```bash
 npm start
 ```
 
 Access the app at `http://localhost:4312`
+
+### 7. Initial OAuth Setup
+1. Start the server
+2. Go to `http://localhost:4312/admin`
+3. Login with your admin password
+4. Click "Authorize with Google" to complete OAuth setup
+5. The refresh token will be automatically saved
 
 ## 🎯 Development Roadmap
 

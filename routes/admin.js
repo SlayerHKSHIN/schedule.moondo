@@ -452,23 +452,135 @@ router.get('/reauth-url', (req, res) => {
   }
 });
 
+// Process OAuth code manually (for admin re-authentication)
+router.post('/process-oauth-code', async (req, res) => {
+  try {
+    const { code, originalUrl } = req.body;
+
+    if (!code || !code.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Authorization code is required'
+      });
+    }
+
+    // Determine the redirect URI from the original URL if provided
+    let redirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+    if (originalUrl && originalUrl.includes('localhost')) {
+      // Extract the localhost URL to use as redirect URI
+      try {
+        const urlObj = new URL(originalUrl);
+        // Reconstruct the base callback URL from localhost
+        redirectUri = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
+        console.log(`Using localhost redirect URI: ${redirectUri}`);
+      } catch (err) {
+        console.log('Could not parse original URL, using default redirect URI');
+      }
+    }
+
+    // Create OAuth2 client with the appropriate redirect URI
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      redirectUri
+    );
+
+    console.log(`Attempting to exchange code with redirect URI: ${redirectUri}`);
+
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code.trim());
+
+    // Set credentials
+    oauth2Client.setCredentials(tokens);
+
+    // Get user info
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const userInfo = await oauth2.userinfo.get();
+    const email = userInfo.data.email;
+
+    console.log(`Manual OAuth code processed for: ${email}`);
+
+    // Save to users.json (encrypted)
+    const usersFilePath = path.join(__dirname, '..', 'data', 'users.json');
+    let users = {};
+
+    try {
+      const usersData = await fs.readFile(usersFilePath, 'utf8');
+      users = JSON.parse(usersData);
+    } catch (err) {
+      console.log('No existing users file, creating new one');
+    }
+
+    // Update user data
+    users[email] = {
+      email,
+      name: userInfo.data.name,
+      picture: userInfo.data.picture,
+      tokens: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        scope: tokens.scope,
+        token_type: tokens.token_type,
+        expiry_date: tokens.expiry_date
+      },
+      lastAuthenticated: new Date().toISOString()
+    };
+
+    // Save updated users file
+    await fs.writeFile(usersFilePath, JSON.stringify(users, null, 2));
+    console.log('User tokens saved to users.json');
+
+    // Sync with TokenManager using saveToken method
+    tokenManager.saveToken(tokens);
+    console.log('Tokens synced to TokenManager');
+
+    // Update TokenManager's OAuth client credentials
+    tokenManager.getClient().setCredentials(tokens);
+    console.log('OAuth client credentials updated');
+
+    res.json({
+      success: true,
+      message: 'Authentication completed successfully',
+      email: email
+    });
+
+  } catch (error) {
+    console.error('Error processing OAuth code:', error);
+
+    let errorMessage = 'Failed to process authorization code';
+
+    if (error.message.includes('invalid_grant')) {
+      errorMessage = 'Authorization code has expired or is invalid. Please try again.';
+    } else if (error.message.includes('redirect_uri_mismatch')) {
+      errorMessage = 'Redirect URI mismatch. Please contact administrator.';
+    }
+
+    res.status(400).json({
+      success: false,
+      error: errorMessage,
+      details: error.message
+    });
+  }
+});
+
 // Delete location for a specific date or date range
 router.delete('/location', async (req, res) => {
   const { startDate, endDate, timeOfDay } = req.body;
-  
+
   if (!startDate) {
     return res.status(400).json({ error: 'Start date is required' });
   }
-  
+
   const end = endDate || startDate;
   const start = new Date(startDate);
   const finish = new Date(end);
   let deletedCount = 0;
-  
+
   while (start <= finish) {
     const dateKey = start.toISOString().split('T')[0];
     const existingData = locationData.get(dateKey);
-    
+
     if (existingData) {
       if (timeOfDay === 'morning' || timeOfDay === 'afternoon') {
         // Delete only morning or afternoon
@@ -496,15 +608,49 @@ router.delete('/location', async (req, res) => {
     }
     start.setDate(start.getDate() + 1);
   }
-  
+
   // Save to file after deletion
   await saveLocationData();
-  
-  res.json({ 
-    message: `Deleted ${deletedCount} location(s)`, 
-    startDate, 
+
+  res.json({
+    message: `Deleted ${deletedCount} location(s)`,
+    startDate,
     endDate: endDate || startDate,
     timeOfDay
+  });
+});
+
+// Delete location by date and period (for frontend compatibility)
+router.delete('/locations/:date/:period', async (req, res) => {
+  const { date, period } = req.params;
+
+  if (!date || !period) {
+    return res.status(400).json({ error: 'Date and period are required' });
+  }
+
+  const existingData = locationData.get(date);
+
+  if (!existingData) {
+    return res.status(404).json({ error: 'Location not found for this date' });
+  }
+
+  // Delete only the specified period
+  existingData[period] = null;
+
+  // If both periods are now null, remove the entire entry
+  if (!existingData.morning && !existingData.afternoon) {
+    locationData.delete(date);
+  } else {
+    locationData.set(date, existingData);
+  }
+
+  // Save to file after deletion
+  await saveLocationData();
+
+  res.json({
+    message: `Deleted ${period} location for ${date}`,
+    date,
+    period
   });
 });
 
