@@ -49,7 +49,7 @@ Traditional scheduling requires endless conversations:
 ### 1. Clone the Repository
 ```bash
 git clone https://github.com/SlayerHKSHIN/schedule.gltr-ous.us.git
-cd schedule-gltr-ous
+cd schedule.moondo
 ```
 
 ### 2. Install Dependencies
