@@ -47,10 +47,23 @@ router.get('/google/callback', async (req, res) => {
     const oauth2Client = createOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
-    
-    // Get user info
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-    const { data: userInfo } = await oauth2.userinfo.get();
+
+    // Get user info - try with fallback
+    let userInfo;
+    try {
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const { data } = await oauth2.userinfo.get();
+      userInfo = data;
+    } catch (userInfoError) {
+      console.warn('Could not fetch userinfo, using calendar email instead:', userInfoError.message);
+      // Fallback: use calendar email as user identifier
+      userInfo = {
+        id: process.env.GOOGLE_CALENDAR_ID,
+        email: process.env.GOOGLE_CALENDAR_ID,
+        name: 'Calendar User',
+        picture: null
+      };
+    }
     
     // Save user to store
     const userData = {

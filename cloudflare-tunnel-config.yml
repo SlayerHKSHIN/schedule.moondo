@@ -4,8 +4,8 @@
 # Tunnel credentials will be auto-populated by cloudflared
 # Run: cloudflared tunnel create hyun-schedule
 
-tunnel: hyun-schedule
-credentials-file: /home/hyun/.cloudflared/b5af78a3-6a5b-4bef-80ce-970780d9e789.json
+tunnel: b5af78a3-6a5b-4bef-80ce-970780d9e789
+credentials-file: /home/h/.cloudflared/b5af78a3-6a5b-4bef-80ce-970780d9e789.json
 
 # Ingress rules - routes traffic from Cloudflare to local services
 ingress:
