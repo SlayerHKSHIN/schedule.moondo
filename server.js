@@ -16,10 +16,11 @@ const tokenManager = require('./utils/tokenManager');
 
 const app = express();
 const PORT = process.env.PORT || 4312;
+const APP_ORIGIN = process.env.APP_ORIGIN || 'https://hyun-schedule.moondo.ai';
 
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
-    ? 'https://hyun-schedule.moondo.ai'
+    ? APP_ORIGIN
     : true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

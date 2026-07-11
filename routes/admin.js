@@ -3,8 +3,29 @@ const router = express.Router();
 const fs = require('fs').promises;
 const path = require('path');
 const { google } = require('googleapis');
+const jwt = require('jsonwebtoken');
 const { createEvent, detectLocation, getUpcomingEvents } = require('../utils/googleCalendar');
 const tokenManager = require('../utils/tokenManager');
+
+const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || process.env.JWT_SECRET;
+
+function requireAdmin(req, res, next) {
+  const token = req.cookies?.admin_session;
+
+  if (!token) {
+    return res.status(401).json({ error: 'Admin authentication required' });
+  }
+
+  try {
+    const session = jwt.verify(token, ADMIN_SESSION_SECRET);
+    if (session.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Invalid admin session' });
+  }
+}
 
 // Store recurring break times (in production, use a database)
 const recurringBreaks = [];
@@ -79,12 +100,25 @@ loadAvailabilityData();
 router.post('/login', (req, res) => {
   const { password } = req.body;
   
+  if (!process.env.ADMIN_PASSWORD || !ADMIN_SESSION_SECRET) {
+    return res.status(503).json({ success: false, message: 'Admin authentication is not configured' });
+  }
+
   if (password === process.env.ADMIN_PASSWORD) {
+    const sessionToken = jwt.sign({ role: 'admin' }, ADMIN_SESSION_SECRET, { expiresIn: '8h' });
+    res.cookie('admin_session', sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 8 * 60 * 60 * 1000
+    });
     res.json({ success: true, message: 'Logged in successfully' });
   } else {
     res.status(401).json({ success: false, message: 'Invalid password' });
   }
 });
+
+router.use(requireAdmin);
 
 router.post('/break-time', async (req, res) => {
   try {

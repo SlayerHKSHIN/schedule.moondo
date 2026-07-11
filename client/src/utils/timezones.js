@@ -121,8 +121,7 @@ const observesDST = (timezone) => {
   return zone && zone.offset.includes('/');
 };
 
-// Export for CommonJS
-module.exports = {
+export {
   timezoneOptions,
   getAllTimezones,
   getTimezoneOffset,

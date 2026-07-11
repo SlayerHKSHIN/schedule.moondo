@@ -1,0 +1,18 @@
+[Unit]
+Description=Schedule GLTR-OUS web application
+After=network.target
+
+[Service]
+Type=simple
+User=haejo
+Group=haejo
+WorkingDirectory=/srv/scheduler
+EnvironmentFile=/etc/scheduler/scheduler.env
+ExecStart=/usr/bin/node /srv/scheduler/server.js
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
