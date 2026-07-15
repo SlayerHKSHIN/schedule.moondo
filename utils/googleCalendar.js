@@ -2,12 +2,17 @@ const { google } = require('googleapis');
 const tokenManager = require('./tokenManager');
 const serviceAuth = require('./serviceAccountAuth');
 
-// Use Service Account for reading, OAuth for creating events with attendees
-const USE_SERVICE_ACCOUNT_FOR_READ = true;
+// Use the connected OAuth account for reading by default.
+const USE_SERVICE_ACCOUNT_FOR_READ = process.env.GOOGLE_CALENDAR_USE_SERVICE_ACCOUNT === 'true';
 const USE_OAUTH_FOR_CREATE = true; // Always use OAuth for event creation to support attendees
 
-// Calendar ID to use (needed for Service Account)
-const CALENDAR_ID = 'haneul96@gmail.com';
+// Calendar ID used for availability and upcoming-event reads.
+const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || 'h@moondo.ai';
+
+const getCalendarReadConfig = () => ({
+  calendarId: CALENDAR_ID,
+  useServiceAccount: USE_SERVICE_ACCOUNT_FOR_READ
+});
 
 // Initialize Service Account if enabled
 let serviceAccountInitialized = false;
@@ -78,7 +83,7 @@ async function detectLocation(date) {
     
     const calendar = await getCalendarForRead();
     const events = await calendar.events.list({
-      calendarId: USE_SERVICE_ACCOUNT_FOR_READ ? CALENDAR_ID : 'primary',
+      calendarId: CALENDAR_ID,
       timeMin: searchStart.toISOString(),
       timeMax: new Date(date.getTime() + 24 * 60 * 60 * 1000).toISOString(),
       singleEvents: true,
@@ -256,7 +261,7 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
 
     const calendar = await getCalendarForRead();
     const events = await calendar.events.list({
-      calendarId: USE_SERVICE_ACCOUNT_FOR_READ ? CALENDAR_ID : 'primary',
+      calendarId: CALENDAR_ID,
       timeMin: calendarSearchStart.toISOString(),
       timeMax: calendarSearchEnd.toISOString(),
       singleEvents: true,
@@ -450,7 +455,7 @@ async function getUpcomingEvents(limit = 3) {
     const now = new Date();
     const calendar = await getCalendarForRead();
     const response = await calendar.events.list({
-      calendarId: USE_SERVICE_ACCOUNT_FOR_READ ? CALENDAR_ID : 'primary',
+      calendarId: CALENDAR_ID,
       timeMin: now.toISOString(),
       maxResults: limit,
       singleEvents: true,
@@ -492,6 +497,7 @@ async function getUpcomingEvents(limit = 3) {
 }
 
 module.exports = {
+  getCalendarReadConfig,
   getAvailableSlots,
   createEvent,
   detectLocation,
