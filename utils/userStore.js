@@ -4,6 +4,15 @@ const crypto = require('crypto');
 
 const USERS_FILE = path.join(__dirname, '../data/users.json');
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+const TOKEN_CIPHER = 'aes-256-gcm';
+
+function getEncryptionKey() {
+  if (/^[0-9a-f]{64}$/i.test(ENCRYPTION_KEY)) {
+    return Buffer.from(ENCRYPTION_KEY, 'hex');
+  }
+
+  return crypto.createHash('sha256').update(ENCRYPTION_KEY, 'utf8').digest();
+}
 
 // Ensure data directory and users file exist
 const dataDir = path.join(__dirname, '../data');
@@ -17,18 +26,39 @@ if (!fs.existsSync(USERS_FILE)) {
 
 // Simple encryption/decryption for tokens
 function encrypt(text) {
-  const cipher = crypto.createCipher('aes-256-cbc', ENCRYPTION_KEY);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return encrypted;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(TOKEN_CIPHER, getEncryptionKey(), iv);
+  const encrypted = Buffer.concat([
+    cipher.update(text, 'utf8'),
+    cipher.final()
+  ]);
+
+  return [
+    'v2',
+    iv.toString('hex'),
+    cipher.getAuthTag().toString('hex'),
+    encrypted.toString('hex')
+  ].join(':');
 }
 
 function decrypt(text) {
   try {
-    const decipher = crypto.createDecipher('aes-256-cbc', ENCRYPTION_KEY);
-    let decrypted = decipher.update(text, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
+    const [version, ivHex, authTagHex, encryptedHex] = text.split(':');
+    if (version !== 'v2' || !ivHex || !authTagHex || !encryptedHex) {
+      throw new Error('Unsupported encrypted token format');
+    }
+
+    const decipher = crypto.createDecipheriv(
+      TOKEN_CIPHER,
+      getEncryptionKey(),
+      Buffer.from(ivHex, 'hex')
+    );
+    decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
+
+    return Buffer.concat([
+      decipher.update(Buffer.from(encryptedHex, 'hex')),
+      decipher.final()
+    ]).toString('utf8');
   } catch (error) {
     console.error('Decryption error:', error);
     return null;
