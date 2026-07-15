@@ -28,7 +28,7 @@ export const GlobalStyles = createGlobalStyle`
     color: ${({ theme }) => theme.colors.text.primary};
     line-height: 1.6;
     min-height: 100vh;
-    overflow-x: hidden;
+    overflow: visible;
     touch-action: manipulation;
   }
 
