@@ -11,7 +11,6 @@ const bookingRoutes = require('./routes/booking');
 const adminRoutes = require('./routes/admin');
 const { router: authRoutes } = require('./routes/auth');
 const userCalendarRoutes = require('./routes/userCalendar');
-const nlpRoutes = require('./routes/nlp');
 const tokenManager = require('./utils/tokenManager');
 
 const app = express();
@@ -47,7 +46,6 @@ app.use('/api/user/calendar', userCalendarRoutes); // User-specific calendar rou
 app.use('/api/calendar', calendarRoutes); // Legacy/admin calendar routes
 app.use('/api/booking', bookingRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/nlp', nlpRoutes); // Natural language processing routes
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'client/build')));
