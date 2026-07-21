@@ -384,20 +384,36 @@ const Footer = styled.footer`
   }
 `;
 
-const TopActionBar = styled.nav`
+const ActionHighlight = styled.div`
   display: flex;
   justify-content: center;
-  margin-bottom: ${props => props.theme.spacing.md};
+  margin-bottom: ${props => props.theme.spacing.lg};
 `;
 
-const TopActionLink = styled.a`
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: ${props => props.theme.colors.text.secondary};
-  margin-bottom: ${props => props.theme.spacing.sm};
+const ManageBookingButton = styled.a`
+  display: inline-flex;
+  align-items: center;
+  gap: ${props => props.theme.spacing.sm};
+  padding: ${props => `${props.theme.spacing.md} ${props.theme.spacing.xl}`};
+  border-radius: 14px;
+  background: linear-gradient(135deg, ${props => props.theme.colors.primary}, ${props => props.theme.colors.pastel.sage});
+  color: white;
+  text-decoration: none;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  box-shadow: ${props => props.theme.shadows.md};
+  transition: all ${props => props.theme.transitions.normal};
 
-  &:hover {
-    color: ${props => props.theme.colors.primary};
+  &:hover,
+  &:focus-visible {
+    transform: translateY(-2px);
+    box-shadow: ${props => props.theme.shadows.lg};
+  }
+
+  &:active {
+    transform: translateY(0);
   }
 `;
 
@@ -603,12 +619,12 @@ function HomePage() {
 
   return (
     <Container>
-      <TopActionBar>
-        <TopActionLink href="/manage">Manage a booking</TopActionLink>
-      </TopActionBar>
       <Header>
         <Title>Schedule a Meeting with {hostName}</Title>
         <Subtitle>Choose a convenient time for our conversation</Subtitle>
+        <ActionHighlight>
+          <ManageBookingButton href="/manage">✦ Manage a booking</ManageBookingButton>
+        </ActionHighlight>
       </Header>
 
       <MainContent>
