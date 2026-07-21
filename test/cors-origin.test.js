@@ -32,7 +32,8 @@ function startServer(port) {
         ADMIN_SESSION_SECRET: 'test-admin-session-secret',
         JWT_SECRET: 'test-user-session-secret',
         SESSION_SECRET: 'test-session-secret',
-        ENCRYPTION_KEY: 'test-encryption-key'
+        ENCRYPTION_KEY: 'test-encryption-key',
+        BOOKING_MANAGEMENT_SECRET: 'test-booking-management-secret-at-least-32-chars'
       }
     });
 

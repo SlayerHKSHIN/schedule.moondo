@@ -31,8 +31,9 @@ function TermsOfService() {
           <ul>
             <li>Display available meeting times</li>
             <li>Allow users to book appointments</li>
-            <li>Send confirmation emails</li>
+            <li>Send Google Calendar invitations and updates</li>
             <li>Create calendar events</li>
+            <li>Allow attendees with a private link to update existing bookings</li>
           </ul>
 
           <Typography variant="h5" gutterBottom sx={{ mt: 3 }}>

@@ -12,10 +12,11 @@ const adminRoutes = require('./routes/admin');
 const { router: authRoutes } = require('./routes/auth');
 const userCalendarRoutes = require('./routes/userCalendar');
 const tokenManager = require('./utils/tokenManager');
+const { assertBookingManagementConfig } = require('./utils/bookingAccess');
 
 const app = express();
 const PORT = process.env.PORT || 4312;
-const APP_ORIGIN = process.env.APP_ORIGIN || 'https://hyun-schedule.moondo.ai';
+const APP_ORIGIN = process.env.APP_ORIGIN || 'https://schedule.moondo.ai';
 
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
@@ -57,6 +58,7 @@ if (process.env.NODE_ENV === 'production') {
 
 // Check and refresh token on server startup
 async function startServer() {
+  assertBookingManagementConfig();
   try {
     // Check token validity on startup and auto-refresh if needed
     console.log('Checking OAuth token validity...');

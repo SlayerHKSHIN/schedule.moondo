@@ -34,7 +34,8 @@ function PrivacyPolicy() {
           </Typography>
           <ul>
             <li>Schedule meetings on Google Calendar</li>
-            <li>Send confirmation emails about your appointments</li>
+            <li>Send Google Calendar invitations and booking updates</li>
+            <li>Let you securely view and update an existing booking</li>
             <li>Display available time slots based on calendar availability</li>
           </ul>
 
@@ -42,12 +43,12 @@ function PrivacyPolicy() {
             3. Google API Services
           </Typography>
           <Typography paragraph>
-            Our app uses Google Calendar API and Gmail API to:
+            Our app uses Google Calendar API to:
           </Typography>
           <ul>
             <li>Read calendar events to determine availability</li>
             <li>Create calendar events for scheduled meetings</li>
-            <li>Send email confirmations through Gmail</li>
+            <li>Deliver invitations and updates through Google Calendar</li>
           </ul>
           <Typography paragraph>
             We only access the minimum necessary data required for these functions.
@@ -61,7 +62,7 @@ function PrivacyPolicy() {
             - We do not permanently store your personal calendar data
           </Typography>
           <Typography paragraph>
-            - Meeting information is stored only for the duration needed to create the calendar event
+            - Meeting information and a private booking identifier are stored on the Google Calendar event
           </Typography>
           <Typography paragraph>
             - We use secure HTTPS connections for all data transmission

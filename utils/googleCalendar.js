@@ -5,8 +5,6 @@ const serviceAuth = require('./serviceAccountAuth');
 
 // Use the connected OAuth account for reading by default.
 const USE_SERVICE_ACCOUNT_FOR_READ = process.env.GOOGLE_CALENDAR_USE_SERVICE_ACCOUNT === 'true';
-const USE_OAUTH_FOR_CREATE = true; // Always use OAuth for event creation to support attendees
-
 // Calendar ID used for availability and upcoming-event reads.
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || 'h@moondo.ai';
 
@@ -258,7 +256,7 @@ async function getAvailableSlots(date, duration = 30, timeOfDay = 'all', userTim
 
 async function createEvent(eventDetails) {
   try {
-    console.log(`[CREATE_EVENT] Starting event creation with details:`, JSON.stringify(eventDetails, null, 2));
+    console.log('[CREATE_EVENT] Starting managed Calendar event creation');
     
     // 이벤트 날짜의 위치 감지
     const location = await detectLocation(new Date(eventDetails.start));
@@ -288,6 +286,9 @@ async function createEvent(eventDetails) {
           { method: 'email', minutes: 24 * 60 },
           { method: 'popup', minutes: 30 }
         ]
+      },
+      extendedProperties: {
+        private: eventDetails.privateExtendedProperties || {}
       }
     };
 
@@ -320,8 +321,7 @@ async function createEvent(eventDetails) {
       }
     }
 
-    console.log(`[CREATE_EVENT] Calling Google Calendar API with event:`, JSON.stringify(event, null, 2));
-    console.log(`[CREATE_EVENT] Getting calendar client for event creation`);
+    console.log('[CREATE_EVENT] Getting calendar client for event creation');
 
     const calendar = await getCalendarForCreate();
     // Determine calendar ID based on which auth method is being used
@@ -332,17 +332,116 @@ async function createEvent(eventDetails) {
     const response = await calendar.events.insert({
       calendarId: calendarId,
       resource: event,
-      sendNotifications: true,
+      sendUpdates: 'all',
       conferenceDataVersion: eventDetails.meetingType === 'video' ? 1 : 0
     });
     
-    console.log(`[CREATE_EVENT] Google Calendar API response:`, JSON.stringify(response.data, null, 2));
+    console.log(`[CREATE_EVENT] Google Calendar event created: ${response.data.id}`);
 
     return response.data;
   } catch (error) {
-    console.error('Error creating calendar event:', error);
+    console.error('Error creating calendar event:', error.message);
     throw error;
   }
+}
+
+async function findEventByIdempotencyKey(idempotencyKey) {
+  const calendar = await getCalendarForRead();
+  const response = await calendar.events.list({
+    calendarId: CALENDAR_ID,
+    privateExtendedProperty: [`bookingIdempotencyKey=${idempotencyKey}`],
+    maxResults: 1,
+    singleEvents: true,
+    showDeleted: false
+  });
+  return response.data.items?.[0] || null;
+}
+
+async function findEventByBookingId(bookingId) {
+  const calendar = await getCalendarForRead();
+  const response = await calendar.events.list({
+    calendarId: CALENDAR_ID,
+    privateExtendedProperty: [`bookingId=${bookingId}`],
+    maxResults: 1,
+    singleEvents: true,
+    showDeleted: false
+  });
+  return response.data.items?.[0] || null;
+}
+
+async function hasEventConflict(eventId, start, end) {
+  const calendar = await getCalendarForRead();
+  const response = await calendar.events.list({
+    calendarId: CALENDAR_ID,
+    timeMin: start,
+    timeMax: end,
+    singleEvents: true,
+    showDeleted: false,
+    orderBy: 'startTime'
+  });
+
+  return (response.data.items || []).some((event) => (
+    event.id !== eventId &&
+    event.status !== 'cancelled' &&
+    event.transparency !== 'transparent'
+  ));
+}
+
+async function updateManagedEvent(eventId, changes) {
+  const calendar = await getCalendarForCreate();
+  const response = await calendar.events.patch({
+    calendarId: serviceAccountInitialized ? CALENDAR_ID : 'primary',
+    eventId,
+    resource: {
+      description: changes.description,
+      start: changes.start,
+      end: changes.end,
+      extendedProperties: {
+        private: changes.privateExtendedProperties || {}
+      }
+    },
+    sendUpdates: 'all',
+    conferenceDataVersion: 1
+  });
+  return response.data;
+}
+
+async function listBookingEventsByEmail(email) {
+  const calendar = await getCalendarForRead();
+  const timeMin = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const timeMax = new Date(Date.now() + 366 * 24 * 60 * 60 * 1000).toISOString();
+  const response = await calendar.events.list({
+    calendarId: CALENDAR_ID,
+    timeMin,
+    timeMax,
+    maxResults: 250,
+    singleEvents: true,
+    showDeleted: false,
+    orderBy: 'startTime'
+  });
+  const normalizedEmail = email.toLowerCase();
+  return (response.data.items || []).filter((event) => (
+    event.status !== 'cancelled' &&
+    event.start?.dateTime &&
+    event.description?.includes('Booked by:') &&
+    (event.attendees || []).some((attendee) => attendee.email?.toLowerCase() === normalizedEmail)
+  ));
+}
+
+async function attachManagementAccess(eventId, changes) {
+  const calendar = await getCalendarForCreate();
+  const response = await calendar.events.patch({
+    calendarId: serviceAccountInitialized ? CALENDAR_ID : 'primary',
+    eventId,
+    resource: {
+      description: changes.description,
+      extendedProperties: {
+        private: changes.privateExtendedProperties || {}
+      }
+    },
+    sendUpdates: 'all'
+  });
+  return response.data;
 }
 
 // Get upcoming events from Google Calendar
@@ -396,7 +495,13 @@ module.exports = {
   getCalendarReadConfig,
   calculateAvailableSlots,
   getAvailableSlots,
+  attachManagementAccess,
   createEvent,
+  findEventByBookingId,
+  findEventByIdempotencyKey,
+  hasEventConflict,
+  listBookingEventsByEmail,
+  updateManagedEvent,
   detectLocation,
   getUpcomingEvents
 };

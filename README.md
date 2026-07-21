@@ -25,13 +25,14 @@ Traditional scheduling requires endless conversations:
   - Real-time sync with Google Calendar
   - Automatic conflict detection
   - Instant availability checking
+  - Private self-service links for viewing and updating existing bookings
 
 - 🔐 **Hybrid Authentication System**
   - Service Account: Permanent calendar read access
   - OAuth 2.0: Full event creation with attendee invitations
 
 - ⚡ **Automated Everything**
-  - Auto-send email notifications to all attendees
+  - Google Calendar invitations and update notifications for all attendees
   - Automatic timezone detection (Korea/US)
   - Responsive web design for any device
 
@@ -41,14 +42,14 @@ Traditional scheduling requires endless conversations:
 - **Frontend:** React, React Calendar
 - **Authentication:** Hybrid System (Service Account + OAuth 2.0)
 - **AI/LLM:** Gemma Model (llm.gltr.app)
-- **APIs:** Google Calendar API, Gmail API
+- **APIs:** Google Calendar API
 - **Database:** Google Calendar (as persistent storage)
 
 ## 📦 Installation & Setup
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/SlayerHKSHIN/schedule.gltr-ous.us.git
+git clone https://github.com/SlayerHKSHIN/schedule.moondo.git
 cd schedule.moondo
 ```
 
@@ -73,6 +74,7 @@ Edit `.env` with your credentials:
 ```env
 PORT=4312
 NODE_ENV=production
+APP_ORIGIN=https://schedule.moondo.ai
 
 # Google OAuth Credentials (from Google Cloud Console)
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
@@ -82,12 +84,12 @@ GOOGLE_REDIRECT_URI=https://your-domain.com/api/auth/google/callback
 # Google Calendar
 GOOGLE_CALENDAR_ID=your-email@gmail.com
 
-# Email Configuration
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-gmail-app-password
-
 # Admin Password
 ADMIN_PASSWORD=your-secure-admin-password
+
+# Stable secret used to sign private booking-management links.
+# Do not rotate it unless all existing links should be invalidated.
+BOOKING_MANAGEMENT_SECRET=your-distinct-random-secret-of-at-least-32-characters
 
 # Encryption Key (generate using the command below)
 ENCRYPTION_KEY=your-64-character-hex-key
@@ -97,6 +99,9 @@ ENCRYPTION_KEY=your-64-character-hex-key
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
+
+Generate `BOOKING_MANAGEMENT_SECRET` independently with the same command. Do
+not reuse `ENCRYPTION_KEY`, `SESSION_SECRET`, or another application secret.
 
 #### Frontend Environment (client/.env)
 ```bash
@@ -121,7 +126,6 @@ Edit `data/availability.json` to set your default availability schedule and time
 2. Create a new project
 3. Enable these APIs:
    - Google Calendar API
-   - Gmail API
 
 #### Step 2: Service Account Setup (for Calendar Reading)
 1. Navigate to "IAM & Admin" > "Service Accounts"
@@ -162,6 +166,11 @@ npm start
 ```
 
 Access the app at `http://localhost:4312`
+
+Existing attendees can visit `/manage` and enter the email used for booking.
+For matching events, Google Calendar sends an updated invitation containing a
+private management link. The link token is kept in the URL fragment (after
+`#`) and must be treated like a password.
 
 ### 7. Initial OAuth Setup
 1. Start the server

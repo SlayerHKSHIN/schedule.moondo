@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
 import Calendar from 'react-calendar';
 import axios from 'axios';
@@ -385,6 +385,7 @@ const Footer = styled.footer`
 `;
 
 function HomePage() {
+  const bookingRequestIdRef = useRef(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [availableSlots, setAvailableSlots] = useState([]);
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -474,6 +475,19 @@ function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, isAuthenticated]);
 
+  useEffect(() => {
+    bookingRequestIdRef.current = null;
+  }, [
+    formData.name,
+    formData.email,
+    formData.additionalEmails,
+    formData.purpose,
+    formData.meetingType,
+    selectedDate,
+    selectedSlot,
+    selectedSlots
+  ]);
+
   const handleSlotClick = (slot) => {
     const slotIndex = availableSlots.indexOf(slot);
     
@@ -525,6 +539,10 @@ function HomePage() {
       
       // Use same endpoint for all users
       const endpoint = '/api/booking/create';
+      if (!bookingRequestIdRef.current) {
+        bookingRequestIdRef.current = window.crypto?.randomUUID?.() ||
+          `booking-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+      }
       const payload = {
         name: formData.name,
         email: formData.email,
@@ -534,15 +552,15 @@ function HomePage() {
         endTime: selectedSlots.length === 2 ? selectedSlots[1] : null,
         purpose: formData.purpose,
         meetingType: formData.meetingType,
-        timezone: userTimezone
+        timezone: userTimezone,
+        idempotencyKey: bookingRequestIdRef.current
       };
       
       const response = await api.post(endpoint, payload);
 
-      console.log('Booking response:', response.data);
-      console.log('Calendar link:', response.data.calendarLink);
       setBookingDetails(response.data);
       setShowSuccessModal(true);
+      bookingRequestIdRef.current = null;
       
       // Reset form
       setFormData({
@@ -751,7 +769,7 @@ function HomePage() {
             <SuccessIcon>✓</SuccessIcon>
             <h2>Meeting Booked Successfully!</h2>
             <p style={{ margin: '1rem 0', color: theme.colors.text.secondary }}>
-              A confirmation email has been sent to {bookingDetails?.email}
+              A Google Calendar invitation has been sent to {bookingDetails?.email}
             </p>
             {bookingDetails?.calendarLink && (
               <div style={{ 
@@ -794,6 +812,14 @@ function HomePage() {
                 </div>
               </div>
             )}
+            {bookingDetails?.manageUrl && (
+              <a
+                href={bookingDetails.manageUrl}
+                style={{ display: 'inline-block', marginBottom: '1rem', color: theme.colors.text.primary, fontWeight: 600 }}
+              >
+                Manage this booking
+              </a>
+            )}
             <SubmitButton onClick={() => setShowSuccessModal(false)}>
               Close
             </SubmitButton>
@@ -802,6 +828,7 @@ function HomePage() {
       )}
 
       <Footer>
+        <a href="/manage">Manage a booking</a>
         <a href="/privacy">Privacy Policy</a>
         <a href="/terms">Terms of Service</a>
         <a href="/admin" style={{ fontWeight: 'bold' }}>Admin</a>

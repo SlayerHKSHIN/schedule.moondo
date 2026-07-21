@@ -1,79 +1,249 @@
 const express = require('express');
 const router = express.Router();
-const { createEvent } = require('../utils/googleCalendar');
-const nodemailer = require('nodemailer');
-const { getUniversalTimezoneOffset } = require('../utils/universal-timezone');
+const {
+  createEvent,
+  attachManagementAccess,
+  findEventByBookingId,
+  findEventByIdempotencyKey,
+  hasEventConflict,
+  listBookingEventsByEmail,
+  updateManagedEvent
+} = require('../utils/googleCalendar');
+const crypto = require('node:crypto');
+const {
+  createManagementToken,
+  getManageUrl,
+  verifyManagementToken
+} = require('../utils/bookingAccess');
+const { parseManagedBookingWindow } = require('../utils/bookingTime');
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+const inFlightBookings = new Map();
+const managementLinkRequests = new Map();
+const MANAGEMENT_LINK_RESPONSE = {
+  message: 'If matching bookings exist, updated Calendar invitations with management links will arrive shortly.'
+};
+
+function getPurpose(description = '') {
+  const purposeLine = description.split('\n').find((line) => line.startsWith('Purpose: '));
+  return purposeLine ? purposeLine.slice('Purpose: '.length) : '';
+}
+
+function getBookedByLine(description = '') {
+  return description.split('\n').find((line) => line.startsWith('Booked by: ')) || 'Booked through schedule.moondo.ai';
+}
+
+function serializeManagedBooking(event) {
+  const primaryAttendee = event.attendees?.[0] || {};
+  return {
+    summary: event.summary || 'Meeting',
+    email: primaryAttendee.email || '',
+    start: event.start?.dateTime || event.start?.date,
+    end: event.end?.dateTime || event.end?.date,
+    timezone: event.start?.timeZone || 'Asia/Seoul',
+    purpose: getPurpose(event.description),
+    meetingType: event.extendedProperties?.private?.bookingMeetingType || (event.hangoutLink ? 'video' : 'in-person'),
+    attendeeStatus: primaryAttendee.responseStatus || 'needsAction',
+    calendarLink: event.htmlLink || '',
+    meetLink: event.hangoutLink || ''
+  };
+}
+
+function withoutManagementLink(description = '') {
+  return description
+    .split('\n')
+    .filter((line) => !line.startsWith('Manage this booking: '))
+    .join('\n')
+    .trim();
+}
+
+router.post('/manage/lookup', async (req, res) => {
+  try {
+    const bookingId = verifyManagementToken(req.body?.token);
+    const event = bookingId ? await findEventByBookingId(bookingId) : null;
+    if (!event || event.status === 'cancelled') {
+      return res.status(404).json({ error: 'Booking not found or management link is invalid' });
+    }
+    return res.json({ booking: serializeManagedBooking(event) });
+  } catch (error) {
+    console.error('[BOOKING] Managed booking lookup failed:', error.message);
+    return res.status(500).json({ error: 'Could not load booking' });
+  }
+});
+
+router.post('/manage/request-link', async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const emailKey = emailLooksValid
+    ? crypto.createHash('sha256').update(email).digest('hex')
+    : null;
+  const cooldownMs = Number(process.env.BOOKING_LINK_REQUEST_COOLDOWN_MS || 10 * 60 * 1000);
+  const now = Date.now();
+
+  if (!emailKey || now - (managementLinkRequests.get(emailKey) || 0) < cooldownMs) {
+    return res.status(202).json(MANAGEMENT_LINK_RESPONSE);
+  }
+  managementLinkRequests.set(emailKey, now);
+
+  try {
+    const events = await listBookingEventsByEmail(email);
+    for (const event of events.slice(0, 10)) {
+      const privateProperties = event.extendedProperties?.private || {};
+      const bookingId = privateProperties.bookingId || crypto.randomUUID();
+      const manageUrl = getManageUrl(createManagementToken(bookingId));
+      const description = `${withoutManagementLink(event.description)}\n\nManage this booking: ${manageUrl}`;
+      await attachManagementAccess(event.id, {
+        description,
+        privateExtendedProperties: {
+          ...privateProperties,
+          bookingId,
+          bookingSource: privateProperties.bookingSource || 'schedule-moondo-legacy-v1',
+          bookingMeetingType: privateProperties.bookingMeetingType || (event.hangoutLink ? 'video' : 'in-person')
+        }
+      });
+    }
+  } catch (error) {
+    console.error('[BOOKING] Management link request failed:', error.message);
+  }
+
+  return res.status(202).json(MANAGEMENT_LINK_RESPONSE);
+});
+
+router.put('/manage', async (req, res) => {
+  try {
+    const bookingId = verifyManagementToken(req.body?.token);
+    const event = bookingId ? await findEventByBookingId(bookingId) : null;
+    if (!event || event.status === 'cancelled') {
+      return res.status(404).json({ error: 'Booking not found or management link is invalid' });
+    }
+
+    const timezone = req.body?.timezone || event.start?.timeZone || 'Asia/Seoul';
+    const { start, end } = parseManagedBookingWindow({
+      date: req.body?.date,
+      time: req.body?.time,
+      durationMinutes: Number(req.body?.durationMinutes),
+      timezone
+    });
+    if (await hasEventConflict(event.id, start, end)) {
+      return res.status(409).json({ error: 'That time is no longer available' });
+    }
+    const purpose = typeof req.body?.purpose === 'string' ? req.body.purpose.trim().slice(0, 1000) : '';
+    const manageUrl = getManageUrl(createManagementToken(bookingId));
+    const description = `${purpose ? `Purpose: ${purpose}\n` : ''}${getBookedByLine(event.description)}\n\nManage this booking: ${manageUrl}`;
+    const updatedEvent = await updateManagedEvent(event.id, {
+      description,
+      start: { dateTime: start, timeZone: timezone },
+      end: { dateTime: end, timeZone: timezone },
+      privateExtendedProperties: event.extendedProperties?.private || {}
+    });
+
+    return res.json({
+      success: true,
+      message: 'Booking updated successfully',
+      booking: serializeManagedBooking(updatedEvent)
+    });
+  } catch (error) {
+    if (error.code === 'INVALID_BOOKING_TIME') {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('[BOOKING] Managed booking update failed:', error.message);
+    return res.status(500).json({ error: 'Could not update booking' });
   }
 });
 
 router.post('/create', async (req, res) => {
-  try {
-    const { name, email, additionalEmails, date, time, endTime, timezone, purpose, meetingType } = req.body;
+  const requestIdempotencyKey = req.body?.idempotencyKey;
+  let releaseInFlight = null;
 
-    if (!name || !email || !date || !time) {
+  if (
+    requestIdempotencyKey !== undefined &&
+    (
+      typeof requestIdempotencyKey !== 'string' ||
+      !/^[A-Za-z0-9_-]{16,128}$/.test(requestIdempotencyKey)
+    )
+  ) {
+    return res.status(400).json({ error: 'Invalid booking request identity' });
+  }
+
+  if (requestIdempotencyKey) {
+    const existingInFlight = inFlightBookings.get(requestIdempotencyKey);
+    if (existingInFlight) {
+      await existingInFlight;
+    } else {
+      const completion = new Promise((resolve) => {
+        releaseInFlight = resolve;
+      });
+      inFlightBookings.set(requestIdempotencyKey, completion);
+    }
+  }
+
+  try {
+    let { name, email, additionalEmails, date, time, endTime, timezone, purpose, meetingType, idempotencyKey } = req.body;
+
+    if (
+      typeof name !== 'string' ||
+      typeof email !== 'string' ||
+      typeof date !== 'string' ||
+      typeof time !== 'string' ||
+      !name.trim() ||
+      !email.trim() ||
+      !date ||
+      !time
+    ) {
       return res.status(400).json({ error: 'Name, email, date, and time are required' });
     }
+    name = name.trim().replace(/[\r\n]+/g, ' ').slice(0, 120);
+    email = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
+    purpose = typeof purpose === 'string' ? purpose.trim().replace(/[\r\n]+/g, ' ').slice(0, 1000) : '';
+    meetingType = meetingType === 'in-person' ? 'in-person' : 'video';
+    additionalEmails = typeof additionalEmails === 'string' ? additionalEmails : '';
 
-    // Convert time string to start and end times
-    // time format: "9:00 AM" or similar
-    const [timePart, period] = time.split(' ');
-    const [hours, minutes] = timePart.split(':');
-    let hour = parseInt(hours);
-    
-    if (period === 'PM' && hour !== 12) {
-      hour += 12;
-    } else if (period === 'AM' && hour === 12) {
-      hour = 0;
-    }
-    
-    // 사용자 시간대 정보를 사용하여 정확한 UTC 시간 계산
     const userTimezone = timezone || 'Asia/Seoul';
-    
-    // 사용자 시간대에 맞는 시간 생성
-    const timeString = `${String(hour).padStart(2, '0')}:${minutes || '00'}`;
-    
-    // Use universal timezone offset calculation - supports ALL timezones
-    const userTzOffset = getUniversalTimezoneOffset(userTimezone, new Date(date));
-    
-    // ISO 형식으로 시간 생성 (사용자 시간대 포함)
-    const startDateTime = new Date(`${date}T${timeString}:00${userTzOffset}`);
-    
-    // endTime이 제공되면 1시간 미팅, 아니면 30분 기본값
-    let endDateTime;
-    if (endTime) {
-      // 1시간 미팅: 첫 번째 슬롯 시작부터 1시간 후
-      endDateTime = new Date(startDateTime);
-      endDateTime.setMinutes(endDateTime.getMinutes() + 60); // 1시간 미팅
-    } else {
-      endDateTime = new Date(startDateTime);
-      endDateTime.setMinutes(endDateTime.getMinutes() + 30); // 30 minute meeting default
+    const { start: startTimeISO, end: endTimeISO } = parseManagedBookingWindow({
+      date,
+      time,
+      durationMinutes: endTime ? 60 : 30,
+      timezone: userTimezone
+    });
+    const bookingIdempotencyKey = idempotencyKey || crypto
+      .createHash('sha256')
+      .update(`${email.trim().toLowerCase()}|${startTimeISO}|${endTimeISO}`)
+      .digest('hex');
+
+    const existingEvent = await findEventByIdempotencyKey(bookingIdempotencyKey);
+    if (existingEvent) {
+      const existingBookingId = existingEvent.extendedProperties?.private?.bookingId;
+      if (!existingBookingId) {
+        throw new Error('Existing managed booking is missing its booking identity');
+      }
+
+      const existingManageUrl = getManageUrl(createManagementToken(existingBookingId));
+      return res.status(200).json({
+        success: true,
+        replayed: true,
+        message: 'Meeting was already scheduled',
+        eventId: existingEvent.id,
+        email,
+        calendarLink: existingEvent.htmlLink,
+        manageUrl: existingManageUrl,
+        notificationStatus: 'calendar_invite_already_sent'
+      });
     }
-    
-    const startTimeISO = startDateTime.toISOString();
-    const endTimeISO = endDateTime.toISOString();
-    
-    console.log(`[BOOKING] Request received - Name: ${name}, Email: ${email}`);
-    console.log(`[BOOKING] User timezone: ${userTimezone}, Selected time: ${time}, Date: ${date}`);
-    console.log(`[BOOKING] Timezone offset: ${userTzOffset}`);
-    console.log(`[BOOKING] Converted to UTC - Start: ${startTimeISO}, End: ${endTimeISO}`);
+    if (await hasEventConflict(null, startTimeISO, endTimeISO)) {
+      return res.status(409).json({ error: 'That time is no longer available' });
+    }
+
+    console.log(`[BOOKING] Request received for ${date} in ${userTimezone}`);
 
     // Get location and timezone information for the meeting date
     const axios = require('axios');
     let locationInfo = null;
-    let hostTimezone = 'Asia/Seoul'; // 기본값
-    let hostName = 'Hyun'; // 기본 호스트 이름
     try {
       const port = process.env.PORT || 4312;
       const response = await axios.get(`http://localhost:${port}/api/admin/location/${date}`);
       locationInfo = response.data;
-      hostTimezone = response.data.timezone || 'Asia/Seoul';
-      hostName = response.data.hostName || 'Hyun';
     } catch (err) {
       console.log('Could not fetch location info');
     }
@@ -81,187 +251,34 @@ router.post('/create', async (req, res) => {
     // Process additional emails
     const allAttendees = [email];
     if (additionalEmails) {
-      console.log(`[BOOKING] Processing additional emails: ${additionalEmails}`);
       const additionalEmailList = additionalEmails.split(',').map(e => e.trim()).filter(e => e);
       allAttendees.push(...additionalEmailList);
-      console.log(`[BOOKING] All attendees: ${allAttendees.join(', ')}`);
     }
 
+    const bookingId = crypto.randomUUID();
+    const managementToken = createManagementToken(bookingId);
+    const manageUrl = getManageUrl(managementToken);
     const eventDetails = {
       summary: `Meeting with ${name}`,
-      description: purpose ? `Purpose: ${purpose}\nBooked by: ${name} (${email})` : `Booked by: ${name} (${email})`,
+      description: `${purpose ? `Purpose: ${purpose}\n` : ''}Booked by: ${name} (${email})\n\nManage this booking: ${manageUrl}`,
       start: startTimeISO,  // ISO string 그대로 사용
       end: endTimeISO,      // ISO string 그대로 사용
       attendeeEmail: email,
       attendees: allAttendees, // All attendees including additional emails
-      meetingType: meetingType || 'video', // default to video
-      locationInfo: locationInfo // Pass location info to event creation
+      meetingType,
+      locationInfo: locationInfo, // Pass location info to event creation
+      privateExtendedProperties: {
+        bookingId,
+        bookingIdempotencyKey,
+        bookingSource: 'schedule-moondo-v1',
+        bookingMeetingType: meetingType
+      }
     };
 
-    console.log(`[BOOKING] Calling createEvent with details:`, JSON.stringify(eventDetails, null, 2));
-    
+    console.log(`[BOOKING] Creating managed Calendar event for booking ${bookingId}`);
     const event = await createEvent(eventDetails);
     
     console.log(`[BOOKING] Event created successfully - Event ID: ${event.id}`);
-    console.log(`[BOOKING] Event response:`, JSON.stringify(event, null, 2));
-
-    // Google Meet 링크가 이벤트에 있는지 확인
-    const meetLink = event.hangoutLink || event.conferenceData?.entryPoints?.[0]?.uri;
-    
-    // 시간 포맷팅 (사용자의 로컬 시간대로 표시)
-    const startDate = new Date(startTimeISO);
-    const endDate = new Date(endTimeISO);
-    
-    // 사용자 시간대 사용 (전달되지 않으면 기본값 사용)
-    const displayTimezone = userTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-    
-    console.log(`Formatting times for email - Timezone: ${displayTimezone}`);
-    console.log(`Start time UTC: ${startTimeISO}`);
-    console.log(`End time UTC: ${endTimeISO}`);
-    
-    // 사용자가 선택한 원래 시간을 그대로 사용 (이미 로컬 시간임)
-    const formattedStartTime = time; // 예: "8:30 PM"
-    
-    // 종료 시간 포맷팅
-    let formattedEndTime;
-    if (endTime) {
-      // 1시간 미팅인 경우, 시작 시간에서 1시간 후
-      const [timePart, period] = time.split(' ');
-      const [hours, mins] = timePart.split(':');
-      let endHour = parseInt(hours);
-      let endMinute = parseInt(mins || '00');
-      let endPeriodFinal = period;
-      
-      // 1시간 추가
-      endHour += 1;
-      
-      if (endHour === 12 && period === 'AM') {
-        endPeriodFinal = 'PM';
-      } else if (endHour > 12) {
-        endHour -= 12;
-        if (endHour === 1 && period === 'AM') {
-          endPeriodFinal = 'PM';
-        }
-      } else if (endHour === 13) {
-        endHour = 1;
-        endPeriodFinal = 'PM';
-      }
-      
-      formattedEndTime = `${endHour}:${String(endMinute).padStart(2, '0')} ${endPeriodFinal}`;
-    } else {
-      // 30분 미팅인 경우
-      const [timePart, period] = time.split(' ');
-      const [hours, mins] = timePart.split(':');
-      let endHour = parseInt(hours);
-      let endMinute = parseInt(mins || '00') + 30;
-      let endPeriodFinal = period;
-      
-      if (endMinute >= 60) {
-        endMinute -= 60;
-        endHour += 1;
-        if (endHour === 12 && period === 'AM') {
-          endPeriodFinal = 'PM';
-        } else if (endHour > 12) {
-          endHour -= 12;
-        }
-      }
-      
-      formattedEndTime = `${endHour}:${String(endMinute).padStart(2, '0')} ${endPeriodFinal}`;
-    }
-    
-    // 시간대 약어 가져오기
-    let timezoneName = '';
-    if (displayTimezone.includes('Seoul') || displayTimezone.includes('Asia/Seoul')) {
-      timezoneName = 'KST';
-    } else if (displayTimezone.includes('Los_Angeles')) {
-      const month = startDate.getMonth();
-      const isDST = month >= 2 && month <= 10;
-      timezoneName = isDST ? 'PDT' : 'PST';
-    } else {
-      const tzFormatter = new Intl.DateTimeFormat('en-US', {
-        timeZoneName: 'short',
-        timeZone: displayTimezone
-      });
-      const tzParts = tzFormatter.formatToParts(startDate);
-      timezoneName = tzParts.find(part => part.type === 'timeZoneName')?.value || '';
-    }
-    
-    // Determine which location to show based on meeting time (사용자 시간 기준)
-    let meetingLocation = null;
-    if (locationInfo) {
-      // 원래 선택한 시간 기준으로 판단
-      let meetingHour = parseInt(hours);
-      if (period === 'PM' && meetingHour !== 12) {
-        meetingHour += 12;
-      } else if (period === 'AM' && meetingHour === 12) {
-        meetingHour = 0;
-      }
-      
-      if (meetingHour < 12 && locationInfo.morning) {
-        meetingLocation = locationInfo.morning;
-      } else if (meetingHour >= 12 && locationInfo.afternoon) {
-        meetingLocation = locationInfo.afternoon;
-      } else if (locationInfo.morning && locationInfo.afternoon && locationInfo.morning === locationInfo.afternoon) {
-        meetingLocation = locationInfo.morning;
-      }
-    }
-    
-    console.log(`Email times - Start: ${formattedStartTime}, End: ${formattedEndTime}, Timezone: ${timezoneName}`);
-    
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Meeting Confirmation - Schedule with Hyun',
-      html: `
-        <h2>Meeting Confirmed!</h2>
-        <p>Dear ${name},</p>
-        <p>Your meeting has been successfully scheduled.</p>
-        <ul>
-          <li><strong>Date:</strong> ${date}</li>
-          <li><strong>Time:</strong> ${formattedStartTime} - ${formattedEndTime} (${timezoneName})</li>
-          ${purpose ? `<li><strong>Purpose:</strong> ${purpose}</li>` : ''}
-          <li><strong>Meeting Type:</strong> ${meetingType === 'video' ? 'Video Call (Google Meet)' : 'In-Person Meeting'}</li>
-          ${meetingType === 'video' && meetLink ? `<li><strong>Google Meet Link:</strong> <a href="${meetLink}">${meetLink}</a></li>` : ''}
-          ${meetingType === 'in-person' && meetingLocation ? `<li><strong>Hyun's Location:</strong> ${meetingLocation}</li>` : ''}
-        </ul>
-        <p>A calendar invitation has been sent to your email.</p>
-        ${meetingType === 'video' ? '<p>Please join the meeting using the Google Meet link at the scheduled time.</p>' : ''}
-        ${meetingType === 'in-person' && meetingLocation ? `<p>📍 <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(meetingLocation)}">View location on Google Maps</a></p>` : ''}
-        <p>Best regards,<br>Hyun</p>
-      `
-    };
-
-    await transporter.sendMail(mailOptions);
-    
-    // Send email to additional guests if any
-    if (additionalEmails) {
-      const additionalEmailList = additionalEmails.split(',').map(e => e.trim()).filter(e => e);
-      for (const additionalEmail of additionalEmailList) {
-        const additionalMailOptions = {
-          ...mailOptions,
-          to: additionalEmail,
-          subject: `Meeting Invitation - Schedule with ${hostName}`,
-          html: `
-            <h2>You've been invited to a meeting!</h2>
-            <p>Dear Guest,</p>
-            <p>You have been invited to a meeting by ${name}.</p>
-            <ul>
-              <li><strong>Date:</strong> ${date}</li>
-              <li><strong>Time:</strong> ${formattedStartTime} - ${formattedEndTime} (${timezoneName})</li>
-              ${purpose ? `<li><strong>Purpose:</strong> ${purpose}</li>` : ''}
-              <li><strong>Meeting Type:</strong> ${meetingType === 'video' ? 'Video Call (Google Meet)' : 'In-Person Meeting'}</li>
-              ${meetingType === 'video' && meetLink ? `<li><strong>Google Meet Link:</strong> <a href="${meetLink}">${meetLink}</a></li>` : ''}
-              ${meetingType === 'in-person' && meetingLocation ? `<li><strong>Location:</strong> ${meetingLocation}</li>` : ''}
-            </ul>
-            <p>A calendar invitation has been sent to your email.</p>
-            ${meetingType === 'video' ? '<p>Please join the meeting using the Google Meet link at the scheduled time.</p>' : ''}
-            ${meetingType === 'in-person' && meetingLocation ? `<p>📍 <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(meetingLocation)}">View location on Google Maps</a></p>` : ''}
-            <p>Best regards,<br>${hostName}</p>
-          `
-        };
-        await transporter.sendMail(additionalMailOptions);
-      }
-    }
 
     // Generate Google Calendar event link - ensure we have a valid link
     let calendarLink = event.htmlLink;
@@ -274,16 +291,28 @@ router.post('/create', async (req, res) => {
     console.log(`[BOOKING] Event created - htmlLink: ${event.htmlLink}, eventId: ${event.id}`);
     console.log(`[BOOKING] Sending response with calendarLink: ${calendarLink}`);
     
-    res.json({ 
+    res.status(201).json({
       success: true, 
       message: 'Meeting scheduled successfully',
       eventId: event.id,
       email: email,
-      calendarLink: calendarLink
+      calendarLink: calendarLink,
+      manageUrl,
+      notificationStatus: 'calendar_invite_sent'
     });
   } catch (error) {
-    console.error('Error creating booking:', error);
+    if (error.code === 'INVALID_BOOKING_TIME') {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('Error creating booking:', error.message);
     res.status(500).json({ error: 'Failed to create booking' });
+  } finally {
+    if (releaseInFlight) {
+      releaseInFlight();
+      if (inFlightBookings.get(requestIdempotencyKey)) {
+        inFlightBookings.delete(requestIdempotencyKey);
+      }
+    }
   }
 });
 
