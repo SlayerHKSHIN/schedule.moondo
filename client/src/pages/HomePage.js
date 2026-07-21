@@ -384,6 +384,23 @@ const Footer = styled.footer`
   }
 `;
 
+const TopActionBar = styled.nav`
+  display: flex;
+  justify-content: center;
+  margin-bottom: ${props => props.theme.spacing.md};
+`;
+
+const TopActionLink = styled.a`
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: ${props => props.theme.colors.text.secondary};
+  margin-bottom: ${props => props.theme.spacing.sm};
+
+  &:hover {
+    color: ${props => props.theme.colors.primary};
+  }
+`;
+
 function HomePage() {
   const bookingRequestIdRef = useRef(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -586,6 +603,9 @@ function HomePage() {
 
   return (
     <Container>
+      <TopActionBar>
+        <TopActionLink href="/manage">Manage a booking</TopActionLink>
+      </TopActionBar>
       <Header>
         <Title>Schedule a Meeting with {hostName}</Title>
         <Subtitle>Choose a convenient time for our conversation</Subtitle>
@@ -828,7 +848,6 @@ function HomePage() {
       )}
 
       <Footer>
-        <a href="/manage">Manage a booking</a>
         <a href="/privacy">Privacy Policy</a>
         <a href="/terms">Terms of Service</a>
         <a href="/admin" style={{ fontWeight: 'bold' }}>Admin</a>
